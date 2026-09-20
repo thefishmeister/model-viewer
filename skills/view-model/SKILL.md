@@ -28,14 +28,23 @@ models that are not bundled) and tell the user about any.
 Options: `--skin FILE` or `--skin-name PLAYER` (the character's skin; default is the bundled one),
 `--resources DIR` (extra assets folder for models kept outside the project), `--wings vampire` (ORVCraft only).
 
-## 2. Check for z-fighting
+## 2. Check for problems, and ask
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/scripts/fix_zfighting.py" <path/to/model.json>
+python "${CLAUDE_PLUGIN_ROOT}/scripts/check_model.py" <model> --json
 ```
 
-If it reports overlapping coplanar faces, offer to run it with `--fix` (it nudges the smaller face out by 0.01 unit and does
-not change the file's formatting). Do not fix without saying so.
+It lists things that are usually mistakes (z-fighting, missing parents or textures, elements outside the game's -16..32 range,
+UVs outside 0..16, unsupported rotations, missing display transforms) and changes nothing. **Never assume a finding is a bug
+or that it is fine: ask the user whether each one is intended**, with the AskUserQuestion tool (up to four at a time, grouping
+findings of the same kind into one question). Options: "Intended, leave it", "Not intended, fix it", "Show me first".
+
+* Intended: leave it, and do not raise that finding again in this conversation.
+* Not intended: fix it. For z-fighting run `fix_zfighting.py <model.json> --fix` (it nudges the smaller face out by 0.01 unit and
+  keeps the file's formatting); for anything else make the smallest edit that resolves it and say what changed.
+* Show me first: describe the exact edit, or for a layout problem publish the viewer first, then ask again.
+
+Rebuild the page after any fix, so what is published matches the file.
 
 ## 3. Publish it
 
@@ -51,6 +60,8 @@ If the model changes, rebuild and republish to the same Artifact URL.
 
 ## Notes
 
-* Cuboid models and Blockbench projects only; no other entity renderers.
+* Cuboid models and Blockbench projects only; no other entity renderers. `check_model.py` reads `.json` models only.
+* Character animations follow the game's `HumanoidModel` maths (walk, sprint, attack swing, held-item arm pose). The Giant Hammer's
+  own swing is ported from its mod code, and is offered only for a model titled "Giant Hammer".
 * The viewer needs internet access (three.js comes from a CDN); the model and textures are embedded.
 * `${CLAUDE_PLUGIN_ROOT}/README.md` documents everything.

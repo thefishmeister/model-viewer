@@ -79,8 +79,6 @@
         <option value="walk">Walk</option>
         <option value="sprint">Sprint</option>
         <option value="swing">Attack swing</option>
-        <option value="slam">Overhead slam</option>
-        <option value="hammer-rest">Hammer on the shoulder</option>
       </select>
       <label class="slider" style="margin-top:6px">Speed <input id="speed" type="range" min="0.2" max="2.5" step="0.05" value="1"></label>
       <div class="row" style="margin-top:6px"><button id="t-pause">Pause</button></div>
@@ -503,6 +501,8 @@ const leftArm = limb([5, armY, 0], [-1, -2, -2], [armW, 12, 4], legacy ? [40, 16
 const rightLeg = limb([-1.9, 12, 0], [-2, 0, -2], [4, 12, 4], [0, 16], [0, 32], 0.25);
 const leftLeg = limb([1.9, 12, 0], [-2, 0, -2], [4, 12, 4], legacy ? [0, 16] : [16, 48], [0, 48], 0.25);
 charBody.add(head, body, rightArm, leftArm, rightLeg, leftLeg);
+// The game's ModelPart rotates about Z, then Y, then X (matrix Rz * Ry * Rx); three.js' default order is the reverse.
+for (const p of [head, body, rightArm, leftArm, rightLeg, leftLeg]) { p.rotation.order = "ZYX"; p.userData.rest = p.position.clone(); }
 scene.add(character);
 
 // ---- wings (entity models worn on the back, driven by code rather than by an item model) -------------------------
@@ -583,7 +583,9 @@ const handMount = (side) => {           // side: +1 right hand, -1 left hand
   const c = new THREE.Group(); c.position.set(side / 16, 0.125, -0.625);
   a.add(b); b.add(c);
   (side > 0 ? rightArm : leftArm).add(a);
-  return c;
+  const turn = new THREE.Group();          // a carried item can be turned about its grip (the Giant Hammer's swing does)
+  c.add(turn);
+  return turn;
 };
 const rightHand = handMount(1), leftHand = handMount(-1);
 const headMount = (() => {
@@ -754,7 +756,8 @@ controls.addEventListener("start", () => { if ($("t-rotate").classList.contains(
 let paused = false, clock = 0, last = performance.now();
 $("t-pause").addEventListener("click", () => { paused = !paused; $("t-pause").classList.toggle("on", paused); $("t-pause").textContent = paused ? "Play" : "Pause"; });
 function resetPose() {
-  for (const p of [head, body, rightArm, leftArm, rightLeg, leftLeg]) p.rotation.set(0, 0, 0);
+  for (const p of [head, body, rightArm, leftArm, rightLeg, leftLeg]) { p.rotation.set(0, 0, 0); p.position.copy(p.userData.rest); }
+  for (const h of [rightHand, leftHand]) { h.rotation.set(0, 0, 0); h.position.set(0, 0, 0); }
   charBody.rotation.set(0, 0, 0);
   for (const list of Object.values(bbNodes)) for (const o of list) { o.position.copy(o.userData.base.p); o.rotation.copy(o.userData.base.r); o.scale.copy(o.userData.base.s); }
 }
@@ -807,37 +810,115 @@ if (BB && BB.animations.length) {
     sel.insertBefore(o, sel.options[1]);
   });
 }
+// The game's own numbers, ported: HumanoidModel.setupAnim (walk, held-item arm pose, attack, arm bob) and, for the
+// Giant Hammer, its HammerHold pose with the two-hand reach solve from HumanoidModelTwoHandMixin.
+const IS_HAMMER = /^giant hammer$/i.test(DATA.title || "");
+if (IS_HAMMER) {
+  const sel = $("anim");
+  for (const [v, label] of [["hammer-carry", "Giant Hammer: carried"], ["hammer-walk", "Giant Hammer: carried, walking"], ["hammer-swing", "Giant Hammer: swing"]]) {
+    const o = document.createElement("option"); o.value = v; o.textContent = label; sel.appendChild(o);
+  }
+}
+const HH = { REST_PITCH: 130, IMPACT: 0.5, REST_ARM_X: 0.3, OVERHEAD_ARM_X: -2.7, STRIKE_ARM_X: -0.9, GUARD_PITCH: -10, STRIKE_PITCH: -111,
+             WINDUP_END: 0.32, HOLD_END: 0.72, SWING_TICKS: 14, REST_OUT: 0.4, MAIN_IN: 0.65, GRIP_Y: 7.6, GRIP_Z: 0.43,
+             POMMEL_MIN: 4, POMMEL_MAX: 7, HEAD_MIN: -12, HEAD_MAX: -4, ITEM_GRIP_Y: -1.67, ITEM_GRIP_Z: 2.26 };
+const clamp01 = (x) => Math.min(1, Math.max(0, x)), smooth = (x) => { x = clamp01(x); return x * x * (3 - 2 * x); }, mix = (k, a, b) => a + k * (b - a);
+function hammerPose(t) {          // t: attackTime, 0..1 through the swing (0 = not swinging)
+  if (t <= 0) return { armX: HH.REST_ARM_X, pitch: HH.REST_PITCH, two: 0 };
+  const grip = clamp01(t / 0.1);
+  if (t < HH.WINDUP_END) {
+    const k = smooth(t / HH.WINDUP_END);
+    return { armX: mix(k, HH.REST_ARM_X, HH.OVERHEAD_ARM_X), pitch: mix(clamp01(k * 1.5), HH.REST_PITCH, HH.GUARD_PITCH), two: grip };
+  }
+  if (t < HH.IMPACT) {
+    let u = (t - HH.WINDUP_END) / (HH.IMPACT - HH.WINDUP_END); u *= u;
+    return { armX: mix(u, HH.OVERHEAD_ARM_X, HH.STRIKE_ARM_X), pitch: mix(u, HH.GUARD_PITCH, HH.STRIKE_PITCH), two: 1 };
+  }
+  if (t < HH.HOLD_END) return { armX: HH.STRIKE_ARM_X, pitch: HH.STRIKE_PITCH, two: 1 };
+  const k = smooth((t - HH.HOLD_END) / (1 - HH.HOLD_END));
+  return { armX: mix(k, HH.STRIKE_ARM_X, HH.REST_ARM_X), pitch: mix(k, HH.STRIKE_PITCH, HH.REST_PITCH), two: 1 - smooth(clamp01(k * 1.6 - 0.3)) };
+}
+const armEuler = (p) => new THREE.Euler(p.rotation.x, p.rotation.y, p.rotation.z, "ZYX");
+const armPx = (p) => new THREE.Vector3(p.position.x, p.position.y, p.position.z).multiplyScalar(16);
+// A point in an arm's own space, carried into the arms' parent space the way ModelPart poses it (all in model pixels).
+const toParent = (p, v) => v.clone().applyEuler(armEuler(p)).add(armPx(p));
+function hammerGrip(mainArm, offArm, right, pose, walkSway) {
+  const both = pose.two;
+  mainArm.rotation.x = walkSway * (1 - both) + pose.armX;
+  mainArm.rotation.y = mix(both, 0, right ? -HH.MAIN_IN : HH.MAIN_IN);
+  mainArm.rotation.z = mix(both, right ? HH.REST_OUT : -HH.REST_OUT, 0);
+  if (both <= 0) return;
+  const offX = offArm.rotation.x, offY = offArm.rotation.y, offZ = offArm.rotation.z;
+  const pitch = rad(pose.pitch);
+  const toPommel = new THREE.Vector3(0, Math.sin(pitch), Math.cos(pitch));
+  const offHand = new THREE.Vector3(right ? 1 : -1, 10, -2), reach = offHand.length();
+  const shoulder = armPx(offArm);
+  let best = null, bestError = Infinity;
+  for (let t = HH.HEAD_MIN; t <= HH.POMMEL_MAX; t += 0.5) {
+    if (t > HH.HEAD_MAX && t < HH.POMMEL_MIN) continue;
+    const point = toParent(mainArm, toPommel.clone().multiplyScalar(t).add(new THREE.Vector3(right ? -1 : 1, HH.GRIP_Y, HH.GRIP_Z)));
+    const error = Math.abs(point.distanceTo(shoulder) - reach) + (t < 0 ? 0.75 : 0);
+    if (error < bestError) { bestError = error; best = point; }
+  }
+  const want = best.sub(shoulder).normalize();
+  const aim = want.clone();
+  offArm.rotation.z = 0;
+  for (let i = 0; i < 4; i++) {
+    const sinX = -Math.sqrt(Math.max(0, 1 - aim.y * aim.y));
+    offArm.rotation.x = Math.atan2(sinX, aim.y);
+    offArm.rotation.y = Math.abs(sinX) < 1e-4 ? 0 : Math.atan2(-aim.x, -aim.z);
+    const actual = offHand.clone().applyEuler(armEuler(offArm)).normalize();
+    aim.add(want.clone().sub(actual)).normalize();
+  }
+  offArm.rotation.x = mix(both, offX, offArm.rotation.x);
+  offArm.rotation.y = mix(both, offY, offArm.rotation.y);
+  offArm.rotation.z = mix(both, offZ, offArm.rotation.z);
+}
 function pose(anim, t) {   // t in seconds; angles in radians, entity space (negative x swings a limb forward)
   const tick = t * 20;
-  if (anim === "idle") {
-    rightArm.rotation.z = Math.cos(tick * 0.09) * 0.05 + 0.05;  leftArm.rotation.z = -(Math.cos(tick * 0.09) * 0.05 + 0.05);
-    rightArm.rotation.x = Math.sin(tick * 0.067) * 0.05;        leftArm.rotation.x = -Math.sin(tick * 0.067) * 0.05;
-  } else if (anim === "walk" || anim === "sprint") {
-    const speed = anim === "walk" ? 1.0 : 1.4, pos = tick * (anim === "walk" ? 0.6 : 0.9);
-    rightArm.rotation.x = Math.cos(pos * 0.6662 + Math.PI) * 2 * speed * 0.5;
-    leftArm.rotation.x = Math.cos(pos * 0.6662) * 2 * speed * 0.5;
-    rightLeg.rotation.x = Math.cos(pos * 0.6662) * 1.4 * speed;
-    leftLeg.rotation.x = Math.cos(pos * 0.6662 + Math.PI) * 1.4 * speed;
-    if (anim === "sprint") charBody.rotation.x = 0;
-  } else if (anim === "swing") {
-    const attack = (t % 0.6) / 0.6;                       // one swing every 0.6 s, as vanilla's attack animation
+  const hammer = anim.startsWith("hammer-");
+  const left = context === "thirdperson_lefthand";
+  const holding = context === "thirdperson_righthand" || context === "thirdperson_lefthand" || hammer;
+  const mainArm = left ? leftArm : rightArm, offArm = left ? rightArm : leftArm, mainHand = left ? leftHand : rightHand;
+  // Walking: HumanoidModel's limb swing. The swing position advances by the smoothed speed each tick (about 0.86 walking,
+  // 1 sprinting), and the same value scales the swing.
+  if (anim === "walk" || anim === "sprint" || anim === "hammer-walk") {
+    const amount = anim === "sprint" ? 1 : 0.86, pos = tick * amount;
+    rightArm.rotation.x = Math.cos(pos * 0.6662 + Math.PI) * 2 * amount * 0.5;
+    leftArm.rotation.x = Math.cos(pos * 0.6662) * 2 * amount * 0.5;
+    rightLeg.rotation.x = Math.cos(pos * 0.6662) * 1.4 * amount;
+    leftLeg.rotation.x = Math.cos(pos * 0.6662 + Math.PI) * 1.4 * amount;
+  }
+  // A held item pulls the arm back a little: HumanoidModel's ITEM arm pose.
+  if (holding) mainArm.rotation.x = mainArm.rotation.x * 0.5 - Math.PI / 10;
+  const walkSway = mainArm.rotation.x * 0.3;
+  // The attack swing (HumanoidModel.setupAttackAnimation). Vanilla's lasts 6 ticks, the hammer's 14, with a pause between.
+  let attack = 0;
+  if (anim === "swing") attack = ((tick % 12) / 6) < 1 ? (tick % 12) / 6 : 0;
+  else if (anim === "hammer-swing") attack = ((tick % 24) / HH.SWING_TICKS) < 1 ? (tick % 24) / HH.SWING_TICKS : 0;
+  if (attack > 0) {
+    const sgn = left ? -1 : 1;
+    body.rotation.y = Math.sin(Math.sqrt(attack) * Math.PI * 2) * 0.2 * sgn;
+    const by = body.rotation.y;
+    rightArm.position.z = Math.sin(by) * 5 / 16;   rightArm.position.x = -Math.cos(by) * 5 / 16;
+    leftArm.position.z = -Math.sin(by) * 5 / 16;   leftArm.position.x = Math.cos(by) * 5 / 16;
+    rightArm.rotation.y += by;  leftArm.rotation.y += by;  leftArm.rotation.x += by;
     let f = 1 - attack; f = 1 - f * f * f * f;
-    const f1 = Math.sin(f * Math.PI), f2 = Math.sin(attack * Math.PI) * 0.75 * 0.7;
-    body.rotation.y = Math.sin(Math.sqrt(attack) * Math.PI * 2) * 0.2;
-    rightArm.rotation.y = body.rotation.y * 2;
-    rightArm.rotation.x = -(f1 * 1.2 + f2);
-    rightArm.rotation.z = Math.sin(attack * Math.PI) * -0.4;
-    head.rotation.y = body.rotation.y;
-  } else if (anim === "hammer-rest") {                    // the Giant Hammer's carry pose: held out, haft angled up over the shoulder
-    rightArm.rotation.set(0.3, 0, 0.4, "ZYX");
-  } else if (anim === "slam") {
-    const p = (t % 1.6) / 1.6;
-    const raise = p < 0.55 ? p / 0.55 : 0, strike = p >= 0.55 && p < 0.72 ? (p - 0.55) / 0.17 : (p >= 0.72 ? 1 : 0);
-    const r = p < 0.55 ? -3.0 * (raise * raise * (3 - 2 * raise)) : -3.0 + 2.75 * (strike * strike);
-    const rec = p >= 0.72 ? Math.min(1, (p - 0.72) / 0.28) : 0;
-    rightArm.rotation.x = r * (1 - rec) + -0.3 * rec * 0;
-    leftArm.rotation.x = rightArm.rotation.x * 0.9;
-    charBody.rotation.x = p < 0.55 ? -0.15 * raise : 0.35 * strike * (1 - rec);
+    const f2 = Math.sin(f * Math.PI), f3 = Math.sin(attack * Math.PI) * 0.7 * 0.75;   // -(head.xRot - 0.7) * 0.75, head level
+    mainArm.rotation.x -= f2 * 1.2 + f3;
+    mainArm.rotation.y += by * 2;
+    mainArm.rotation.z += Math.sin(attack * Math.PI) * -0.4;
+  }
+  // Idle arm bob (AnimationUtils.bobArms).
+  rightArm.rotation.z += Math.cos(tick * 0.09) * 0.05 + 0.05;   leftArm.rotation.z -= Math.cos(tick * 0.09) * 0.05 + 0.05;
+  rightArm.rotation.x += Math.sin(tick * 0.067) * 0.05;         leftArm.rotation.x -= Math.sin(tick * 0.067) * 0.05;
+  if (hammer) {
+    const p = hammerPose(attack);
+    hammerGrip(mainArm, offArm, !left, p, walkSway);
+    // Turn the hammer about its grip by however far the swing has pitched it from the rest pose (ItemInHandLayerMixin).
+    const turn = rad(p.pitch - HH.REST_PITCH), gy = HH.ITEM_GRIP_Y / 16, gz = HH.ITEM_GRIP_Z / 16;
+    mainHand.rotation.x = turn;
+    mainHand.position.set(0, gy - (gy * Math.cos(turn) - gz * Math.sin(turn)), gz - (gy * Math.sin(turn) + gz * Math.cos(turn)));
   }
 }
 $("anim").addEventListener("change", () => { resetPose(); if (!paused) clock = 0; });

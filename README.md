@@ -82,5 +82,6 @@ Run it before pushing a model. It leaves the file's formatting alone.
 
 * `build_viewer.py` builds the page. `viewer_template.html` is the page (three.js, the character, the controls).
 * `fix_zfighting.py` finds and fixes overlapping coplanar faces.
+* `check_model.py` lists likely mistakes as "is this intended?" questions (the skill asks them for you); it changes nothing.
 * `skins/` holds the character's skin(s); `skins/DEFAULT` names the one used.
 * `.claude-plugin/plugin.json` is the plugin manifest; `skills/view-model/SKILL.md` is the skill.
