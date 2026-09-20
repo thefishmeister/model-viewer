@@ -1,0 +1,11 @@
+{
+  "name": "model-viewer",
+  "owner": { "name": "fishy" },
+  "plugins": [
+    {
+      "name": "model-viewer",
+      "source": "./",
+      "description": "Preview Minecraft item and block models in 3D and check them for z-fighting."
+    }
+  ]
+}

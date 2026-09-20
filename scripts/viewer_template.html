@@ -1,0 +1,883 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model Viewer</title>
+<style>
+  :root {
+    --bg: #14121a; --panel: #1d1a26; --line: #3a3550; --text: #e9e6f2; --muted: #9a94b3; --accent: #e8b84a;
+    --stage-top: #2b2740; --stage-bottom: #0e0c14; --slot: #8b8b8b; --slot-dark: #373737; --slot-light: #ffffff;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f3f1f7; --panel: #ffffff; --line: #d6d1e4; --text: #1d1a26; --muted: #6c6785; --accent: #a96d00;
+      --stage-top: #dcd7ec; --stage-bottom: #b9b2d2;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f3f1f7; --panel: #ffffff; --line: #d6d1e4; --text: #1d1a26; --muted: #6c6785; --accent: #a96d00;
+    --stage-top: #dcd7ec; --stage-bottom: #b9b2d2;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #app { display: grid; grid-template-columns: 1fr 268px; height: 100%; min-height: 460px; }
+  #stage { position: relative; background: linear-gradient(var(--stage-top), var(--stage-bottom)); min-width: 0; overflow: hidden; }
+  #c { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; z-index: 1; }
+  #c:active { cursor: grabbing; }
+  #slot { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: none; pointer-events: none; z-index: 0;
+          background: var(--slot); border: 3px solid; border-color: var(--slot-dark) var(--slot-light) var(--slot-light) var(--slot-dark); }
+  #title { position: absolute; left: 14px; top: 12px; font-weight: 600; letter-spacing: .01em; pointer-events: none; z-index: 2; }
+  #hint { position: absolute; left: 14px; bottom: 10px; color: var(--muted); font-size: 12px; pointer-events: none; z-index: 2; }
+  #panel { background: var(--panel); border-left: 1px solid var(--line); padding: 14px; overflow: auto; display: flex; flex-direction: column; gap: 14px; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 6px; font-weight: 600; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; }
+  button, select { font: inherit; color: var(--text); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+  button:hover, select:hover { border-color: var(--accent); }
+  button.on { background: var(--accent); color: #14121a; border-color: var(--accent); font-weight: 600; }
+  select { width: 100%; background: var(--panel); }
+  label.slider { display: block; color: var(--muted); font-size: 12px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .note { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  #stats { color: var(--muted); font-size: 12px; white-space: pre-wrap; }
+  #warn { color: #e5843a; font-size: 12px; white-space: pre-wrap; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  @media (max-width: 720px) {
+    #app { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+    #panel { border-left: 0; border-top: 1px solid var(--line); max-height: 44vh; }
+  }
+</style>
+</head>
+<body>
+<h2 class="sr-only">Interactive 3D viewer for a Minecraft item model, with a Minecraft character to show it held, worn and in the inventory. Drag to rotate, scroll to zoom.</h2>
+<div id="app">
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="slot"></div>
+    <div id="title"></div>
+    <div id="hint">Drag to orbit · scroll to zoom · right-drag to pan</div>
+  </div>
+  <div id="panel">
+    <div><h2>In game</h2>
+      <select id="display" autocomplete="off"></select>
+      <label class="slider" id="scale-row" style="display:none;margin-top:6px">Display scale <span id="dscale-v"></span>
+        <input id="dscale" type="range" min="0.2" max="3" step="0.02" value="0.5"></label>
+      <div class="note" id="display-note"></div>
+    </div>
+    <div id="wings-panel" hidden><h2>Wings</h2>
+      <select id="wings-mode" autocomplete="off">
+        <option value="rest">Resting (unfurled, on the ground)</option>
+        <option value="flight">Flight (flapping)</option>
+        <option value="crouch">Crouching (tucked)</option>
+      </select>
+      <div class="note">The flap eases between resting and flight the way it does in game. Pair it with Idle, Walk or Sprint below.</div>
+    </div>
+    <div><h2>Animation</h2>
+      <select id="anim" autocomplete="off">
+        <option value="none">None</option>
+        <option value="idle">Idle</option>
+        <option value="walk">Walk</option>
+        <option value="sprint">Sprint</option>
+        <option value="swing">Attack swing</option>
+        <option value="slam">Overhead slam</option>
+        <option value="hammer-rest">Hammer on the shoulder</option>
+      </select>
+      <label class="slider" style="margin-top:6px">Speed <input id="speed" type="range" min="0.2" max="2.5" step="0.05" value="1"></label>
+      <div class="row" style="margin-top:6px"><button id="t-pause">Pause</button></div>
+    </div>
+    <div><h2>View</h2>
+      <div class="row">
+        <button data-view="north">North</button><button data-view="south">South</button>
+        <button data-view="east">East</button><button data-view="west">West</button>
+        <button data-view="top">Top</button><button data-view="iso">Iso</button>
+      </div>
+    </div>
+    <div><h2>Show</h2>
+      <div class="row">
+        <button id="t-rotate" class="on">Auto-rotate</button>
+        <button id="t-wire">Wireframe</button>
+        <button id="t-bright">Full-bright</button>
+        <button id="t-block">1 block</button>
+        <button id="t-char">Character</button>
+        <button id="t-aura" class="on" hidden>Aura</button>
+        <button id="t-grid" class="on">Floor</button>
+        <button id="t-theme">Light stage</button>
+      </div>
+    </div>
+    <div><h2>Lighting</h2>
+      <label class="slider">Light angle <input id="light" type="range" min="0" max="360" value="45"></label>
+    </div>
+    <div><h2>Model</h2><div id="stats"></div><div id="warn"></div></div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+"use strict";
+/* The builder script replaces the next line with the model, its textures (as data URIs) and any warnings. */
+const DATA = /*__DATA__*/null;
+
+const $ = (id) => document.getElementById(id);
+const rad = (d) => THREE.MathUtils.degToRad(d);
+$("title").textContent = DATA.title;
+document.title = DATA.title + " Viewer";
+
+// ---- scene ---------------------------------------------------------------------------------------------------
+const canvas = $("c");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(35, 1, 0.05, 60);
+const controls = new THREE.OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 1.4;
+
+const hemi = new THREE.HemisphereLight(0xffffff, 0x555566, 0.75);
+const sun = new THREE.DirectionalLight(0xffffff, 0.85);
+scene.add(hemi, sun, sun.target);
+
+// ---- textures ------------------------------------------------------------------------------------------------
+const loader = new THREE.TextureLoader();
+const texCache = {};
+const warnings = DATA.warnings.slice();
+function canvasTexture(draw, w = 16, h = 16) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  draw(c.getContext("2d"));
+  const t = new THREE.CanvasTexture(c);
+  t.magFilter = t.minFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  t.encoding = THREE.sRGBEncoding;
+  return t;
+}
+const missing = canvasTexture((g) => { g.fillStyle = "#000"; g.fillRect(0, 0, 16, 16); g.fillStyle = "#f0f"; g.fillRect(0, 0, 8, 8); g.fillRect(8, 8, 8, 8); });
+function resolveTexture(ref) {
+  let name = ref.startsWith("#") ? ref.slice(1) : ref, guard = 0, value = DATA.textures[name];
+  while (typeof value === "string" && value.startsWith("#") && guard++ < 8) value = DATA.textures[value.slice(1)];
+  return value;
+}
+function textureFor(ref) {
+  const key = resolveTexture(ref);
+  if (!key || !DATA.images[key]) {
+    const w = "Missing texture for " + ref + (key ? " (" + key + ")" : "");
+    if (!warnings.includes(w)) warnings.push(w);
+    return missing;
+  }
+  if (!texCache[key]) {
+    const t = loader.load(DATA.images[key]);
+    t.magFilter = t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.encoding = THREE.sRGBEncoding;
+    texCache[key] = t;
+  }
+  return texCache[key];
+}
+
+// ---- geometry: Minecraft cuboid faces ---------------------------------------------------------------------------
+// Corners as seen from outside the face: top-left, top-right, bottom-right, bottom-left.
+function corners(face, f, t) {
+  const [x0, y0, z0] = f, [x1, y1, z1] = t;
+  switch (face) {
+    case "north": return [[x1, y1, z0], [x0, y1, z0], [x0, y0, z0], [x1, y0, z0]];
+    case "south": return [[x0, y1, z1], [x1, y1, z1], [x1, y0, z1], [x0, y0, z1]];
+    case "east":  return [[x1, y1, z1], [x1, y1, z0], [x1, y0, z0], [x1, y0, z1]];
+    case "west":  return [[x0, y1, z0], [x0, y1, z1], [x0, y0, z1], [x0, y0, z0]];
+    case "up":    return [[x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]];
+    case "down":  return [[x0, y0, z1], [x1, y0, z1], [x1, y0, z0], [x0, y0, z0]];
+  }
+}
+function defaultUV(face, f, t) {
+  const [x0, y0, z0] = f, [x1, y1, z1] = t;
+  switch (face) {
+    case "north": return [16 - x1, 16 - y1, 16 - x0, 16 - y0];
+    case "south": return [x0, 16 - y1, x1, 16 - y0];
+    case "east":  return [16 - z1, 16 - y1, 16 - z0, 16 - y0];
+    case "west":  return [z0, 16 - y1, z1, 16 - y0];
+    case "up":    return [x0, z0, x1, z1];
+    case "down":  return [x0, 16 - z1, x1, 16 - z0];
+  }
+}
+
+const materials = [];
+const matCache = new Map();
+function materialFor(texture) {
+  if (!matCache.has(texture)) {
+    const opts = { map: texture, transparent: true, alphaTest: 0.02, side: THREE.DoubleSide };
+    const entry = { shaded: new THREE.MeshLambertMaterial(opts), bright: new THREE.MeshBasicMaterial(opts) };
+    materials.push(entry);
+    matCache.set(texture, entry);
+  }
+  return matCache.get(texture);
+}
+
+const meshes = [];
+function buildElement(el) {
+  const f = el.from, t = el.to;
+  const group = new THREE.Group();
+  for (const face of Object.keys(el.faces || {})) {
+    const spec = el.faces[face];
+    const c = corners(face, f, t);
+    if (!c) continue;
+    const uv = spec.uv || defaultUV(face, f, t);
+    let uvs = [[uv[0], uv[1]], [uv[2], uv[1]], [uv[2], uv[3]], [uv[0], uv[3]]];
+    const turn = (((spec.rotation || 0) % 360) + 360) % 360 / 90;
+    if (turn) uvs = uvs.map((_, i) => uvs[(i + 4 - turn) % 4]);
+    const positions = [], uvArray = [];
+    for (const i of [0, 3, 1, 1, 3, 2]) {        // two triangles: TL, BL, TR and TR, BL, BR
+      positions.push(c[i][0] / 16, c[i][1] / 16, c[i][2] / 16);
+      uvArray.push(uvs[i][0] / 16, 1 - uvs[i][1] / 16);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    g.setAttribute("uv", new THREE.Float32BufferAttribute(uvArray, 2));
+    g.computeVertexNormals();
+    const entry = materialFor(textureFor(spec.texture || "#missing"));
+    const mesh = new THREE.Mesh(g, el.shade === false ? entry.bright : entry.shaded);
+    mesh.userData.entry = entry;
+    mesh.userData.unshaded = el.shade === false;
+    meshes.push(mesh);
+    group.add(mesh);
+  }
+  const r = el.rotation;
+  if (!r || !r.angle) return group;
+  const pivot = new THREE.Group();
+  const o = r.origin || [8, 8, 8];
+  pivot.position.set(o[0] / 16, o[1] / 16, o[2] / 16);
+  group.position.set(-o[0] / 16, -o[1] / 16, -o[2] / 16);
+  pivot.add(group);
+  const a = rad(r.angle);
+  if (r.axis === "x") pivot.rotation.x = a; else if (r.axis === "y") pivot.rotation.y = a; else pivot.rotation.z = a;
+  return pivot;
+}
+
+// ---- Blockbench projects (.bbmodel): a bone tree of cubes, box or per-face UVs, keyframe animations -------------------
+const BB = DATA.bb || null;
+const bbNodes = {};                     // node id -> every copy of that bone (the model, its glow, its aura)
+function bbTexture(i) {
+  const t = BB.textures[i];
+  if (!t || !t.uri) { warnings.push("Texture " + i + " is missing."); return missing; }
+  if (!texCache["bb" + i]) {
+    const tex = loader.load(t.uri);
+    tex.magFilter = tex.minFilter = THREE.NearestFilter; tex.generateMipmaps = false; tex.encoding = THREE.sRGBEncoding;
+    texCache["bb" + i] = tex;
+  }
+  return texCache["bb" + i];
+}
+// Face rectangles in texture pixels for a box-UV cube (Blockbench's layout, which matches the game's entity layout).
+function bbBoxUV(c, face) {
+  const sx = Math.floor(c.to[0] - c.from[0]), sy = Math.floor(c.to[1] - c.from[1]), sz = Math.floor(c.to[2] - c.from[2]);
+  const ox = c.uvOffset[0], oy = c.uvOffset[1];
+  const table = {
+    east:  [ox, oy + sz, ox + sz, oy + sz + sy],
+    north: [ox + sz, oy + sz, ox + sz + sx, oy + sz + sy],
+    west:  [ox + sz + sx, oy + sz, ox + 2 * sz + sx, oy + sz + sy],
+    south: [ox + 2 * sz + sx, oy + sz, ox + 2 * sz + 2 * sx, oy + sz + sy],
+    up:    [ox + sz, oy, ox + sz + sx, oy + sz],
+    down:  [ox + sz + sx, oy + sz, ox + sz + 2 * sx, oy],
+  };
+  return table[face];
+}
+function bbCube(c, pivot, extra) {
+  const o = c.origin || [0, 0, 0];
+  const group = new THREE.Group();
+  group.position.set((o[0] - pivot[0]) / 16, (o[1] - pivot[1]) / 16, (o[2] - pivot[2]) / 16);
+  group.rotation.order = "ZYX";
+  const r = c.rotation || [0, 0, 0];
+  group.rotation.set(rad(r[0]), rad(r[1]), rad(r[2]));
+  const g = (c.inflate || 0) + (extra || 0);
+  const f = [c.from[0] - g - o[0], c.from[1] - g - o[1], c.from[2] - g - o[2]];
+  const t = [c.to[0] + g - o[0], c.to[1] + g - o[1], c.to[2] + g - o[2]];
+  for (const face of Object.keys(c.faces)) {
+    const spec = c.faces[face];
+    const cs = corners(face, f, t);
+    if (!cs) continue;
+    const px = (c.boxUv && c.uvOffset) ? bbBoxUV(c, face) : spec.uv;
+    if (!px) continue;
+    const tex = BB.textures[spec.texture];
+    const uw = tex ? tex.uv[0] : BB.resolution[0], uh = tex ? tex.uv[1] : BB.resolution[1];
+    const uvs = [[px[0], px[1]], [px[2], px[1]], [px[2], px[3]], [px[0], px[3]]];
+    const positions = [], uvArray = [];
+    for (const i of [0, 3, 1, 1, 3, 2]) {
+      positions.push(cs[i][0] / 16, cs[i][1] / 16, cs[i][2] / 16);
+      uvArray.push(uvs[i][0] / uw, 1 - uvs[i][1] / uh);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvArray, 2));
+    geo.computeVertexNormals();
+    const entry = materialFor(bbTexture(spec.texture));
+    const mesh = new THREE.Mesh(geo, c.shade === false ? entry.bright : entry.shaded);
+    mesh.userData.entry = entry;
+    mesh.userData.unshaded = c.shade === false;
+    meshes.push(mesh);
+    group.add(mesh);
+  }
+  return group;
+}
+function bbNode(n, parentPivot, extra) {
+  const pv = n.origin || [0, 0, 0];
+  const g = new THREE.Group();
+  g.rotation.order = "ZYX";
+  g.position.set((pv[0] - parentPivot[0]) / 16, (pv[1] - parentPivot[1]) / 16, (pv[2] - parentPivot[2]) / 16);
+  const r = n.rotation || [0, 0, 0];
+  g.rotation.set(rad(r[0]), rad(r[1]), rad(r[2]));
+  g.userData.bbid = n.id;
+  g.userData.base = { p: g.position.clone(), r: g.rotation.clone(), s: g.scale.clone() };
+  for (const c of n.cubes || []) g.add(bbCube(c, pv, extra));
+  for (const ch of n.children || []) g.add(bbNode(ch, pv, extra));
+  return g;
+}
+function registerBones(root) { root.traverse((o) => { if (o.userData.bbid) (bbNodes[o.userData.bbid] = bbNodes[o.userData.bbid] || []).push(o); }); }
+function buildBB(into) {
+  const main = bbNode(BB.root, [0, 0, 0]);
+  registerBones(main);
+  into.add(main);
+  bbLayers.main = main;
+  if (BB.glow) {                              // emissive parts: the same bones with a glow texture that ignores the light
+    const glowTex = loader.load(BB.glow);
+    glowTex.magFilter = glowTex.minFilter = THREE.NearestFilter; glowTex.generateMipmaps = false; glowTex.encoding = THREE.sRGBEncoding;
+    const glow = main.clone(true);
+    const glowMat = new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, alphaTest: 0.02, side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending, depthWrite: false });
+    glow.traverse((o) => { if (o.isMesh) o.material = glowMat; });
+    registerBones(glow);
+    into.add(glow);
+    bbLayers.glow = glow;
+  }
+  if (BB.aura) {
+    // The aura: shells of the same bones with every cube grown outward, in translucent additive gold. Each cube glows on all of its
+    // sides, so the light hugs the whole silhouette, the sword and the cape included, instead of trailing a copy of the model.
+    const aura = new THREE.Group();
+    (BB.aura.shells || [{ grow: 1, opacity: 0.2 }]).forEach((shell, i) => {
+      const tree = bbNode(BB.root, [0, 0, 0], shell.grow);
+      // Back faces only, drawn after the model: they sit behind the armour, which hides them, and show only past its edge as a rim of light.
+      const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(BB.aura.color || "#ffc94a"), transparent: true, opacity: shell.opacity,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide });
+      tree.traverse((o) => { if (o.isMesh) { o.material = mat; o.renderOrder = 10 - i; o.userData.aura = true; } });
+      registerBones(tree);
+      aura.add(tree);
+    });
+    into.add(aura);
+    bbLayers.aura = aura;
+  }
+}
+const bbLayers = {};
+
+// The model itself, in raw Minecraft coordinates (one block is the unit cube from 0 to 1).
+const model = new THREE.Group();
+if (BB) buildBB(model); else for (const el of DATA.elements) model.add(buildElement(el));
+const bbox = new THREE.Box3().setFromObject(bbLayers.main || model);
+// Gold motes that stream off every surface of the body, and a soft glow on the floor beneath it.
+let auraMotes = null;
+if (BB && bbLayers.aura) {
+  const N = 140, box = bbox;
+  const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), vel = new Float32Array(N * 3), life = new Float32Array(N), age = new Float32Array(N);
+  const dotTex = canvasTexture((g) => {
+    const gr = g.createRadialGradient(8, 8, 0, 8, 8, 8);
+    gr.addColorStop(0, "rgba(255,244,190,1)"); gr.addColorStop(0.4, "rgba(255,210,90,0.6)"); gr.addColorStop(1, "rgba(255,190,60,0)");
+    g.fillStyle = gr; g.fillRect(0, 0, 16, 16);
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  const points = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.11, map: dotTex, vertexColors: true, transparent: true,
+    depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
+  points.frustumCulled = false;
+  const cx = (box.min.x + box.max.x) / 2, cz = (box.min.z + box.max.z) / 2;
+  const hx = Math.max(0.2, (box.max.x - box.min.x) / 2), hz = Math.max(0.2, (box.max.z - box.min.z) / 2);
+  const spawn = (i) => {                         // a point somewhere in the body, sent outward and upward
+    const x = cx + (Math.random() * 2 - 1) * hx, z = cz + (Math.random() * 2 - 1) * hz;
+    const y = box.min.y + Math.random() * (box.max.y - box.min.y);
+    let dx = x - cx, dz = z - cz; const len = Math.hypot(dx, dz) || 1; dx /= len; dz /= len;
+    const speed = 0.25 + Math.random() * 0.45;
+    pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z;
+    vel[i * 3] = dx * speed; vel[i * 3 + 1] = 0.12 + Math.random() * 0.3; vel[i * 3 + 2] = dz * speed;
+    life[i] = 0.9 + Math.random() * 1.5; age[i] = 0;
+  };
+  for (let i = 0; i < N; i++) { spawn(i); age[i] = Math.random() * life[i]; }
+  const floorTex = canvasTexture((g) => {
+    const gr = g.createRadialGradient(32, 32, 2, 32, 32, 32);
+    gr.addColorStop(0, "rgba(255,214,110,0.55)"); gr.addColorStop(0.6, "rgba(255,200,80,0.22)"); gr.addColorStop(1, "rgba(255,190,60,0)");
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  }, 64, 64);
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(Math.max(hx, hz) * 1.9 + 0.5, 48),
+    new THREE.MeshBasicMaterial({ map: floorTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  floor.rotation.x = -Math.PI / 2; floor.position.set(cx, box.min.y + 0.01, cz);
+  bbLayers.aura.add(points, floor);
+  auraMotes = { update(dt) {
+    for (let i = 0; i < N; i++) {
+      age[i] += dt;
+      if (age[i] > life[i]) spawn(i);
+      pos[i * 3] += vel[i * 3] * dt; pos[i * 3 + 1] += vel[i * 3 + 1] * dt; pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
+      const t = age[i] / life[i], fade = Math.sin(Math.PI * Math.min(1, t));
+      col[i * 3] = fade; col[i * 3 + 1] = 0.8 * fade; col[i * 3 + 2] = 0.35 * fade;
+    }
+    geo.attributes.position.needsUpdate = true; geo.attributes.color.needsUpdate = true;
+  } };
+}
+const size = bbox.getSize(new THREE.Vector3());
+const centre = bbox.getCenter(new THREE.Vector3());
+const modelWrap = new THREE.Group();      // offsets the model so it pivots the way the game does (about its block centre)
+modelWrap.add(model);
+const displayNode = new THREE.Group();    // carries the display transform (translation, rotation, scale)
+displayNode.add(modelWrap);
+
+// ---- a Minecraft character, built the way the game builds one -------------------------------------------------
+// Entity model space: y points DOWN and the model is drawn 0.9375 scale, feet on the ground 1.501 below the origin.
+// It is textured from a real 64x64 skin (both layers, classic or slim arms). Without one, a plain default is drawn.
+const SKIN = DATA.skin || null;
+function fallbackSkin() {
+  return canvasTexture((g) => {
+    const skin = "#c68b62", hair = "#3b2417", shirt = "#3aa8c1", pants = "#3f3d9c", shoe = "#5a5a5a";
+    const fill = (c, x, y, w, h) => { g.fillStyle = c; g.fillRect(x, y, w, h); };
+    fill(skin, 0, 0, 64, 64);
+    fill(hair, 0, 0, 32, 8); fill(hair, 8, 8, 8, 2); fill(hair, 0, 8, 8, 8); fill(hair, 16, 8, 16, 8);
+    fill(skin, 8, 10, 8, 6);
+    fill("#fff", 9, 12, 2, 1); fill("#fff", 13, 12, 2, 1); fill("#5b4bd0", 10, 12, 1, 1); fill("#5b4bd0", 13, 12, 1, 1);
+    fill(shirt, 16, 16, 24, 16); fill(shirt, 40, 16, 16, 16); fill(skin, 44, 16, 8, 4); fill(skin, 48, 20, 8, 12);
+    fill(pants, 0, 16, 16, 16); fill(shoe, 4, 16, 8, 4);
+    fill(pants, 16, 48, 16, 16); fill(shoe, 20, 48, 8, 4);
+    fill(shirt, 32, 48, 16, 16); fill(shirt, 40, 48, 16, 16);
+  }, 64, 64);
+}
+let skinTexture;
+if (SKIN) {
+  skinTexture = loader.load(SKIN.uri);
+  skinTexture.magFilter = skinTexture.minFilter = THREE.NearestFilter;
+  skinTexture.generateMipmaps = false;
+  skinTexture.encoding = THREE.sRGBEncoding;
+} else skinTexture = fallbackSkin();
+const slim = !!(SKIN && SKIN.slim);
+const legacy = !!(SKIN && SKIN.legacy);   // an old 64x32 skin has no separate left arm/leg and no outer layer
+const skinMat = new THREE.MeshLambertMaterial({ map: skinTexture, transparent: true, alphaTest: 0.5 });
+const overlayMat = new THREE.MeshLambertMaterial({ map: skinTexture, transparent: true, alphaTest: 0.05, side: THREE.DoubleSide });
+
+// One skin cuboid: size w x h x d pixels, its texture at (u, v) in the standard layout, grown by `inflate` pixels.
+// Box face order is +x, -x, +y, -y, +z, -z; in entity space the front is -z and y grows downward.
+function skinBox(w, h, d, u, v, inflate, material) {
+  const geo = new THREE.BoxGeometry((w + inflate * 2) / 16, (h + inflate * 2) / 16, (d + inflate * 2) / 16);
+  const H = legacy ? 32 : 64;
+  const regions = [
+    [u + d + w, v + d, d, h],          // +x
+    [u, v + d, d, h],                  // -x
+    [u + d + w, v, w, d],              // +y  (the underside)
+    [u + d, v, w, d],                  // -y  (the top)
+    [u + d + w + d, v + d, w, h],      // +z  (the back)
+    [u + d, v + d, w, h],              // -z  (the front)
+  ];
+  const uv = geo.attributes.uv;
+  regions.forEach(([x, y, rw, rh], face) => {
+    const u0 = x / 64, u1 = (x + rw) / 64, top = 1 - y / H, bottom = 1 - (y + rh) / H;
+    // The frame is turned half a revolution (y down, x mirrored), so every face is drawn turned half a revolution back.
+    const corners = [[u1, bottom], [u0, bottom], [u1, top], [u0, top]];
+    corners.forEach((c, i) => uv.setXY(face * 4 + i, c[0], c[1]));
+  });
+  return new THREE.Mesh(geo, material);
+}
+function limb(pivot, corner, dims, base, overlay, inflate) {
+  const node = new THREE.Group();
+  node.position.set(pivot[0] / 16, pivot[1] / 16, pivot[2] / 16);
+  const centre = [(corner[0] + dims[0] / 2) / 16, (corner[1] + dims[1] / 2) / 16, (corner[2] + dims[2] / 2) / 16];
+  const mesh = skinBox(dims[0], dims[1], dims[2], base[0], base[1], 0, skinMat);
+  mesh.position.set(...centre);
+  node.add(mesh);
+  if (overlay && !legacy) {
+    const outer = skinBox(dims[0], dims[1], dims[2], overlay[0], overlay[1], inflate, overlayMat);
+    outer.position.set(...centre);
+    node.add(outer);
+  }
+  return node;
+}
+const character = new THREE.Group();
+const charBody = new THREE.Group();           // the entity-space frame
+charBody.scale.set(-0.9375, -0.9375, 0.9375);
+charBody.position.y = 1.501 * 0.9375;
+character.add(charBody);
+const armW = slim ? 3 : 4;
+const armY = slim ? 2.5 : 2;
+const head = limb([0, 0, 0], [-4, -8, -4], [8, 8, 8], [0, 0], [32, 0], 0.5);
+const body = limb([0, 0, 0], [-4, 0, -2], [8, 12, 4], [16, 16], [16, 32], 0.25);
+const rightArm = limb([-5, armY, 0], [slim ? -2 : -3, -2, -2], [armW, 12, 4], [40, 16], [40, 32], 0.25);
+const leftArm = limb([5, armY, 0], [-1, -2, -2], [armW, 12, 4], legacy ? [40, 16] : [32, 48], [48, 48], 0.25);
+const rightLeg = limb([-1.9, 12, 0], [-2, 0, -2], [4, 12, 4], [0, 16], [0, 32], 0.25);
+const leftLeg = limb([1.9, 12, 0], [-2, 0, -2], [4, 12, 4], legacy ? [0, 16] : [16, 48], [0, 48], 0.25);
+charBody.add(head, body, rightArm, leftArm, rightLeg, leftLeg);
+scene.add(character);
+
+// ---- wings (entity models worn on the back, driven by code rather than by an item model) -------------------------
+const WINGS = DATA.wings || null;
+let wingsUpdate = null;
+if (WINGS) {
+  const sheet = loader.load(WINGS.image);
+  sheet.magFilter = sheet.minFilter = THREE.NearestFilter;
+  sheet.generateMipmaps = false;
+  sheet.encoding = THREE.sRGBEncoding;
+  const [SW, SH] = WINGS.sheet, [PW, PH, PY] = WINGS.panel;
+  const panelMat = new THREE.MeshLambertMaterial({ map: sheet, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide });
+  // The sheet's colours are sRGB, so convert the flat-coloured bars to match how the textured membrane is shown.
+  const boneMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(WINGS.boneColor).convertSRGBToLinear() });
+  const armMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(WINGS.armColor).convertSRGBToLinear() });
+  const tipMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(WINGS.tipColor).convertSRGBToLinear() });
+  const wingRoot = new THREE.Group();          // the model's own "body" part: it leans and drops when crouching
+  body.add(wingRoot);
+  const wingList = [];
+  function bones(group, side, line, thick, depth, mat) {   // thick and depth may be one number or one per segment
+    for (let i = 0; i + 1 < line.length; i++) {
+      const th = Array.isArray(thick) ? thick[i] : thick, dp = Array.isArray(depth) ? depth[i] : depth;
+      const [x0, y0] = line[i], dx = line[i + 1][0] - x0, dy = line[i + 1][1] - y0;
+      const len = Math.round(Math.hypot(dx, dy)) + 1;
+      const m = Array.isArray(mat) ? mat[i] : mat;
+      const bar = new THREE.Group();
+      bar.position.set(side * x0 / 16, y0 / 16, 0);
+      bar.rotation.z = side * Math.atan2(dy, dx);
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(len / 16, th / 16, dp / 16), m);
+      mesh.position.x = side * (len / 2 - 0.5) / 16;
+      bar.add(mesh);
+      group.add(bar);
+    }
+  }
+  for (const side of [1, -1]) {
+    const wing = new THREE.Group();
+    wing.position.set(side * WINGS.offset[0] / 16, WINGS.offset[1] / 16, WINGS.offset[2] / 16);
+    // The flat membrane: front texture region at the sheet's origin, root at u = 0, the same on both wings.
+    const geo = new THREE.BufferGeometry();
+    const xs = [0, PW, PW, 0], ys = [PY, PY, PY + PH, PY + PH];
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(xs.flatMap((x, i) => [side * x / 16, ys[i] / 16, 0]), 3));
+    geo.setAttribute("uv", new THREE.Float32BufferAttribute(xs.flatMap((x, i) => [x / SW, 1 - (ys[i] - PY) / SH]), 2));
+    geo.setIndex([0, 1, 2, 0, 2, 3]);
+    geo.computeVertexNormals();
+    wing.add(new THREE.Mesh(geo, panelMat));
+    bones(wing, side, WINGS.arm, 2, 1.2, armMat);
+    bones(wing, side, WINGS.claw, WINGS.clawThick, WINGS.clawDepth, WINGS.clawThick.map((t, i) => i >= WINGS.clawTipFrom ? tipMat : armMat));
+    WINGS.fingers.forEach((f, i) => i === 0 ? bones(wing, side, f, 1.6, 1.1, armMat) : bones(wing, side, f, 1, 1, boneMat));
+    wingRoot.add(wing);
+    wingList.push([wing, side]);
+  }
+  let flight = 0;
+  wingsUpdate = (dt, t) => {
+    const mode = $("wings-mode").value, a = WINGS.anim, tick = t * 20;
+    flight += Math.max(-1, Math.min(1, (mode === "flight" ? 1 : 0) - flight)) * Math.min(1, a.blend * 20 * dt);
+    const crouch = mode === "crouch";
+    wingRoot.rotation.x = crouch ? 0.5 : 0;
+    wingRoot.position.y = crouch ? 3.2 / 16 : 0;
+    const fold = crouch ? a.fold : 0;
+    const ground = tick * a.beatSpeed * a.groundSpeed, air = tick * a.beatSpeed;
+    const lerp = (x, y, k) => x + (y - x) * k;
+    const lift = lerp(Math.sin(ground) * a.groundSwing, Math.sin(air), flight) * a.beatLift;
+    const sweep = lerp(Math.cos(ground) * a.groundSwing, Math.cos(air), flight) * a.beatSweep;
+    const spread = lerp(a.restSpread, a.flightSpread, flight) - fold + lift;
+    const back = lerp(a.restSweep, a.flightSweep, flight) + fold + sweep;
+    for (const [wing, side] of wingList) {
+      wing.rotation.set(0, -side * back, -side * spread, "ZYX");
+      wing.scale.set(WINGS.scale, WINGS.scale, WINGS.scale);
+    }
+  };
+  $("wings-panel").hidden = false;
+}
+
+// Where the game hangs an item: the same chain of transforms as its hand and head layers.
+const handMount = (side) => {           // side: +1 right hand, -1 left hand
+  const a = new THREE.Group(); a.rotation.x = rad(-90);
+  const b = new THREE.Group(); b.rotation.y = rad(180);
+  const c = new THREE.Group(); c.position.set(side / 16, 0.125, -0.625);
+  a.add(b); b.add(c);
+  (side > 0 ? rightArm : leftArm).add(a);
+  return c;
+};
+const rightHand = handMount(1), leftHand = handMount(-1);
+const headMount = (() => {
+  const a = new THREE.Group(); a.position.set(0, -0.25, 0);
+  const b = new THREE.Group(); b.rotation.y = rad(180); b.scale.set(0.625, -0.625, -0.625);
+  a.add(b); head.add(a);
+  return b;
+})();
+
+// ---- reference objects -----------------------------------------------------------------------------------------
+const cubeEdges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
+  new THREE.LineBasicMaterial({ color: 0xe8b84a, transparent: true, opacity: 0.7 }));
+cubeEdges.visible = false;
+scene.add(cubeEdges);
+const gridSize = Math.max(6, Math.ceil(size.length() * 4));
+const grid = new THREE.GridHelper(gridSize, gridSize * 2, 0x6a6488, 0x3a3550);
+grid.material.transparent = true; grid.material.opacity = 0.55;
+scene.add(grid);
+
+// ---- the "in game" contexts ------------------------------------------------------------------------------------
+const CONTEXTS = [
+  ["none", "Model only", "The model on its own, centred."],
+  ["thirdperson_righthand", "Held, right hand", "Third-person view, in the right hand."],
+  ["thirdperson_lefthand", "Held, left hand", "Third-person view, in the left hand."],
+  ["head", "Worn on the head", "Shown as a helmet/hat would be."],
+  ["above", "Above the head (item display)", "A display entity floating over the head, its front facing the way the wearer does. Set the scale."],
+  ["gui", "Inventory slot", "How it looks in a slot (uses the model's gui transform)."],
+  ["ground", "Dropped on the ground", "The item as a dropped entity."],
+  ["fixed", "Item frame", "Inside an item frame."],
+  ["firstperson_righthand", "First person, right", "The transform used in first person (shown on its own)."],
+  ["firstperson_lefthand", "First person, left", "The transform used in first person (shown on its own)."],
+];
+const select = $("display");
+const entityOnly = !!BB && !BB.item;      // an entity model has no item display transforms: it is shown standing, only
+if (entityOnly) CONTEXTS.splice(1);
+for (const [key, label] of CONTEXTS) {
+  const o = document.createElement("option");
+  o.value = key;
+  o.textContent = label + (key !== "none" && !(DATA.display || {})[key] ? " (no transform set)" : "");
+  select.appendChild(o);
+}
+if (WINGS) { CONTEXTS.splice(2); select.value = "thirdperson_righthand"; select.parentElement.hidden = true; }
+else select.value = "none";                // never trust a value the browser restored from an earlier visit
+$("anim").value = WINGS ? "idle" : "none";
+let context = "none";
+let focus = { center: new THREE.Vector3(), radius: 1 };
+let showCharacter = false;
+const modelRadius = Math.max(size.length() * 0.5, 0.2);
+
+function detach(node) { if (node.parent) node.parent.remove(node); }
+function applyContext() {
+  context = select.value;
+  const d = (DATA.display || {})[context] || {};
+  const tr = d.translation || [0, 0, 0], ro = d.rotation || [0, 0, 0], sc = d.scale || [1, 1, 1];
+  const left = context.endsWith("lefthand");
+  // The game mirrors a left hand: x translation and the y and z rotations flip.
+  displayNode.position.set((left ? -tr[0] : tr[0]) / 16, tr[1] / 16, tr[2] / 16);
+  displayNode.rotation.set(rad(ro[0]), rad(left ? -ro[1] : ro[1]), rad(left ? -ro[2] : ro[2]), "XYZ");
+  displayNode.scale.set(sc[0], sc[1], sc[2]);
+  detach(displayNode);
+  $("display-note").textContent = CONTEXTS.find((c) => c[0] === context)[2];
+  const inGui = context === "gui";
+  document.body.classList.toggle("gui", inGui);
+  $("slot").style.display = inGui ? "block" : "none";
+  const mounted = ["thirdperson_righthand", "thirdperson_lefthand", "head", "above"].includes(context);
+  $("scale-row").style.display = context === "above" ? "block" : "none";
+  if (context === "none") {
+    // Centred, or, beside the character, standing on the same floor so their sizes can be compared.
+    modelWrap.position.set(-centre.x, showCharacter ? -bbox.min.y : -centre.y, -centre.z);
+    scene.add(displayNode);
+  } else {
+    modelWrap.position.set(-0.5, -0.5, -0.5);
+    if (context === "thirdperson_righthand") rightHand.add(displayNode);
+    else if (context === "thirdperson_lefthand") leftHand.add(displayNode);
+    else if (context === "head") headMount.add(displayNode);
+    else if (context === "above") { character.add(displayNode); placeAbove(); }
+    else scene.add(displayNode);
+  }
+  character.visible = mounted || (context === "none" && showCharacter);
+  if (context === "none" && showCharacter) character.position.set(size.x / 2 + 0.9, 0, 0); else character.position.set(0, 0, 0);
+  grid.visible = !inGui && $("t-grid").classList.contains("on");
+  cubeEdges.visible = !inGui && $("t-block").classList.contains("on");
+  // Where things sit: a character stands on y = 0; a lone model rests on the floor under it.
+  const floorY = mounted ? 0 : (context === "none" ? (showCharacter ? 0 : bbox.min.y - centre.y) : -0.6);
+  grid.position.set(0, floorY - 0.001, 0);
+  cubeEdges.position.set(0.5, 0.5, 0.5).sub(context === "none" ? centre : new THREE.Vector3(0.5, 0.5, 0.5));
+  if (context === "above") {
+    focus = { center: new THREE.Vector3(0, 1.55, 0), radius: 0.95 };
+  } else if (mounted) {
+    // Frame the character and whatever they hold: a big item (a hammer) needs the camera further back and higher.
+    const avg = (sc[0] + sc[1] + sc[2]) / 3, extent = modelRadius * avg;
+    focus = { center: new THREE.Vector3(0, 0.95 + Math.max(0, extent - 1.2) * 0.45, 0), radius: WINGS ? 2.1 : Math.max(1.35, extent + 0.6) };
+  } else if (context === "none" && showCharacter) {
+    const tall = Math.max(size.y, 1.9);
+    focus = { center: new THREE.Vector3(character.position.x / 2, tall / 2, 0), radius: Math.max(1.6, tall * 0.75 + size.x * 0.3) };
+  }
+  else focus = { center: new THREE.Vector3(0, 0, 0), radius: inGui ? 0.9 : modelRadius };
+  if (inGui) { controls.autoRotate = false; $("t-rotate").classList.remove("on"); }
+  updateLighting();
+  view(inGui ? "gui" : (mounted ? "front-character" : "iso"));
+}
+select.addEventListener("change", applyContext);
+// A floating item display sits just over the head. The character faces -z here, the model's own front is +z, so it turns half way.
+function placeAbove() {
+  const k = +$("dscale").value;
+  $("dscale-v").textContent = "x" + k.toFixed(2);
+  displayNode.position.set(0, 1.8 + 0.53 + 0.5 * k, 0);
+  displayNode.rotation.set(0, 0, 0);   // the game turns an item display 180 degrees, so the model's north face is the wearer's front, and the viewer's character already faces north
+  displayNode.scale.set(k, k, k);
+}
+$("dscale").addEventListener("input", () => { if (context === "above") placeAbove(); });
+
+// ---- camera ---------------------------------------------------------------------------------------------------
+function view(name) {
+  const dirs = { north: [0, 0, -1], south: [0, 0, 1], east: [1, 0, 0], west: [-1, 0, 0], top: [0, 1, 0.001],
+                 iso: [0.9, 0.6, -1.1], gui: [0, 0, 1], "front-character": [0.45, 0.25, -1] };
+  const dir = new THREE.Vector3(...dirs[name]).normalize();
+  const reach = name === "front-character" ? 3.0 : 4.2;
+  let d = focus.radius * reach / Math.min(1, Math.max(0.55, camera.aspect));
+  if (name === "gui") {
+    camera.fov = 8;
+    // Sit far back with a narrow lens, so it reads as the flat orthographic projection the inventory uses.
+    d = 1 / (2 * Math.tan(rad(4)) * 0.62);
+  } else camera.fov = 35;
+  camera.updateProjectionMatrix();
+  camera.near = Math.max(0.02, d * 0.04);
+  camera.far = d * 8;
+  camera.updateProjectionMatrix();
+  controls.target.copy(focus.center);
+  camera.position.copy(focus.center).addScaledVector(dir, d);
+  controls.update();
+  layoutSlot();
+}
+function layoutSlot() {
+  const h = $("stage").clientHeight;
+  const s = Math.round(h * 0.62);
+  const el = $("slot"); el.style.width = el.style.height = s + "px";
+}
+document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => view(b.dataset.view)));
+
+// ---- toggles --------------------------------------------------------------------------------------------------
+function toggle(id, on, apply) {
+  const b = $(id);
+  b.addEventListener("click", () => { const now = !b.classList.contains("on"); b.classList.toggle("on", now); apply(now); });
+  apply(on);
+}
+toggle("t-rotate", true, (v) => { controls.autoRotate = v; });
+toggle("t-wire", false, (v) => { materials.forEach((m) => { m.shaded.wireframe = v; m.bright.wireframe = v; }); });
+toggle("t-bright", false, () => updateLighting());
+toggle("t-block", false, (v) => { cubeEdges.visible = v && context !== "gui"; });
+toggle("t-char", false, (v) => { showCharacter = v; if (context === "none") applyContext(); });
+if (BB && (bbLayers.glow || bbLayers.aura)) {
+  $("t-aura").hidden = false;
+  toggle("t-aura", true, (v) => { if (bbLayers.glow) bbLayers.glow.visible = v; if (bbLayers.aura) bbLayers.aura.visible = v; });
+}
+toggle("t-grid", true, (v) => { grid.visible = v && context !== "gui"; });
+toggle("t-theme", false, (v) => { document.documentElement.dataset.theme = v ? "light" : "dark"; });
+function updateLighting() {
+  const bright = $("t-bright").classList.contains("on") || context === "gui";
+  meshes.forEach((m) => { if (!m.userData.aura) m.material = (bright || m.userData.unshaded) ? m.userData.entry.bright : m.userData.entry.shaded; });
+}
+$("light").addEventListener("input", () => setLight(+$("light").value));
+function setLight(deg) { const a = rad(deg); sun.position.set(Math.cos(a) * 3, 3, Math.sin(a) * 3); }
+setLight(45);
+controls.addEventListener("start", () => { if ($("t-rotate").classList.contains("on")) { $("t-rotate").classList.remove("on"); controls.autoRotate = false; } });
+
+// ---- animations: the same limb maths the game uses, driven by a clock ------------------------------------------
+let paused = false, clock = 0, last = performance.now();
+$("t-pause").addEventListener("click", () => { paused = !paused; $("t-pause").classList.toggle("on", paused); $("t-pause").textContent = paused ? "Play" : "Pause"; });
+function resetPose() {
+  for (const p of [head, body, rightArm, leftArm, rightLeg, leftLeg]) p.rotation.set(0, 0, 0);
+  charBody.rotation.set(0, 0, 0);
+  for (const list of Object.values(bbNodes)) for (const o of list) { o.position.copy(o.userData.base.p); o.rotation.copy(o.userData.base.r); o.scale.copy(o.userData.base.s); }
+}
+// Keyframe values may be numbers, numeric strings or Molang-ish expressions such as "math.sin(query.anim_time * 180) * 5".
+const molang = { sin: (d) => Math.sin(rad(d)), cos: (d) => Math.cos(rad(d)), abs: Math.abs, min: Math.min, max: Math.max, pi: Math.PI,
+                 sqrt: Math.sqrt, floor: Math.floor, ceil: Math.ceil, round: Math.round, pow: Math.pow, clamp: (v, a, b) => Math.min(b, Math.max(a, v)),
+                 lerp: (a, b, t) => a + (b - a) * t, mod: (a, b) => a % b };
+function bbValue(v, t) {
+  if (typeof v === "number") return v;
+  if (v === undefined || v === null || v === "") return 0;
+  const n = Number(v);
+  if (!Number.isNaN(n)) return n;
+  try { return Number(Function("math", "q", "query", "return (" + String(v).toLowerCase() + ");")(molang, { anim_time: t }, { anim_time: t })) || 0; } catch (e) { return 0; }
+}
+function bbSample(keys, t, neutral) {
+  if (!keys.length) return neutral;
+  const at = (k) => [bbValue(k.value.x, t), bbValue(k.value.y, t), bbValue(k.value.z, t)];
+  if (t <= keys[0].time) return at(keys[0]);
+  const last = keys[keys.length - 1];
+  if (t >= last.time) return at(last);
+  let i = 0;
+  while (keys[i + 1].time < t) i++;
+  const a = keys[i], b = keys[i + 1];
+  if (a.interpolation === "step") return at(a);
+  const u = (t - a.time) / Math.max(1e-6, b.time - a.time), va = at(a), vb = at(b);
+  return [va[0] + (vb[0] - va[0]) * u, va[1] + (vb[1] - va[1]) * u, va[2] + (vb[2] - va[2]) * u];
+}
+function bbPlay(index, clockSeconds) {
+  const anim = BB.animations[index];
+  if (!anim) return;
+  const length = Math.max(0.001, anim.length);
+  const t = anim.loop === "loop" ? clockSeconds % length : Math.min(clockSeconds, length);
+  for (const id of Object.keys(anim.animators)) {
+    const keys = anim.animators[id];
+    const rot = bbSample(keys.filter((k) => k.channel === "rotation"), t, [0, 0, 0]);
+    const pos = bbSample(keys.filter((k) => k.channel === "position"), t, [0, 0, 0]);
+    const scl = bbSample(keys.filter((k) => k.channel === "scale"), t, [1, 1, 1]);
+    for (const o of bbNodes[id] || []) {
+      o.rotation.x += rad(rot[0]); o.rotation.y += rad(rot[1]); o.rotation.z += rad(rot[2]);
+      o.position.x -= pos[0] / 16; o.position.y += pos[1] / 16; o.position.z += pos[2] / 16;   // Blockbench mirrors x for positions
+      o.scale.set(o.scale.x * scl[0], o.scale.y * scl[1], o.scale.z * scl[2]);
+    }
+  }
+}
+if (BB && BB.animations.length) {
+  const sel = $("anim");
+  BB.animations.forEach((a, i) => {
+    const o = document.createElement("option");
+    o.value = "bb:" + i; o.textContent = "Model: " + a.name.replace(/^animation\./, "");
+    sel.insertBefore(o, sel.options[1]);
+  });
+}
+function pose(anim, t) {   // t in seconds; angles in radians, entity space (negative x swings a limb forward)
+  const tick = t * 20;
+  if (anim === "idle") {
+    rightArm.rotation.z = Math.cos(tick * 0.09) * 0.05 + 0.05;  leftArm.rotation.z = -(Math.cos(tick * 0.09) * 0.05 + 0.05);
+    rightArm.rotation.x = Math.sin(tick * 0.067) * 0.05;        leftArm.rotation.x = -Math.sin(tick * 0.067) * 0.05;
+  } else if (anim === "walk" || anim === "sprint") {
+    const speed = anim === "walk" ? 1.0 : 1.4, pos = tick * (anim === "walk" ? 0.6 : 0.9);
+    rightArm.rotation.x = Math.cos(pos * 0.6662 + Math.PI) * 2 * speed * 0.5;
+    leftArm.rotation.x = Math.cos(pos * 0.6662) * 2 * speed * 0.5;
+    rightLeg.rotation.x = Math.cos(pos * 0.6662) * 1.4 * speed;
+    leftLeg.rotation.x = Math.cos(pos * 0.6662 + Math.PI) * 1.4 * speed;
+    if (anim === "sprint") charBody.rotation.x = 0;
+  } else if (anim === "swing") {
+    const attack = (t % 0.6) / 0.6;                       // one swing every 0.6 s, as vanilla's attack animation
+    let f = 1 - attack; f = 1 - f * f * f * f;
+    const f1 = Math.sin(f * Math.PI), f2 = Math.sin(attack * Math.PI) * 0.75 * 0.7;
+    body.rotation.y = Math.sin(Math.sqrt(attack) * Math.PI * 2) * 0.2;
+    rightArm.rotation.y = body.rotation.y * 2;
+    rightArm.rotation.x = -(f1 * 1.2 + f2);
+    rightArm.rotation.z = Math.sin(attack * Math.PI) * -0.4;
+    head.rotation.y = body.rotation.y;
+  } else if (anim === "hammer-rest") {                    // the Giant Hammer's carry pose: held out, haft angled up over the shoulder
+    rightArm.rotation.set(0.3, 0, 0.4, "ZYX");
+  } else if (anim === "slam") {
+    const p = (t % 1.6) / 1.6;
+    const raise = p < 0.55 ? p / 0.55 : 0, strike = p >= 0.55 && p < 0.72 ? (p - 0.55) / 0.17 : (p >= 0.72 ? 1 : 0);
+    const r = p < 0.55 ? -3.0 * (raise * raise * (3 - 2 * raise)) : -3.0 + 2.75 * (strike * strike);
+    const rec = p >= 0.72 ? Math.min(1, (p - 0.72) / 0.28) : 0;
+    rightArm.rotation.x = r * (1 - rec) + -0.3 * rec * 0;
+    leftArm.rotation.x = rightArm.rotation.x * 0.9;
+    charBody.rotation.x = p < 0.55 ? -0.15 * raise : 0.35 * strike * (1 - rec);
+  }
+}
+$("anim").addEventListener("change", () => { resetPose(); if (!paused) clock = 0; });
+
+// ---- stats and layout -------------------------------------------------------------------------------------------
+const dim = (v) => (v * 16).toFixed(1).replace(/\.0$/, "");
+$("stats").textContent = (BB ? BB.cubeCount + " cubes · " + BB.textures.length : DATA.elements.length + " elements · " + Object.keys(DATA.images).length) + " texture(s)\n" +
+  "Size " + dim(size.x) + " × " + dim(size.y) + " × " + dim(size.z) + " units\n(16 units = 1 block)";
+$("warn").textContent = warnings.join("\n");
+
+// A page shown inside a host (an embedded frame, a tab opened in the background) can load before its stage has any size.
+// Wait for a real one, then frame the camera, so the first view is never built from a zero-sized stage.
+let sized = false, started = false;
+function resize() {
+  const s = $("stage");
+  const w = s.clientWidth, h = s.clientHeight;
+  if (!(w > 0 && h > 0)) return;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  layoutSlot();
+  if (!sized) { sized = true; if (started) applyContext(); }
+}
+window.addEventListener("resize", resize);
+if (window.ResizeObserver) new ResizeObserver(resize).observe($("stage"));
+resize();
+character.visible = false;
+applyContext();
+started = true;
+(function loop(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (!paused) clock += dt * +$("speed").value;
+  const anim = $("anim").value;
+  if (anim.startsWith("bb:")) { resetPose(); bbPlay(+anim.slice(3), clock); }
+  else if (anim !== "none") { resetPose(); pose(anim, clock); }
+  if (wingsUpdate) wingsUpdate(dt, clock);
+  if (auraMotes && bbLayers.aura.visible) auraMotes.update(dt);
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+})(performance.now());
+</script>
+</body>
+</html>
