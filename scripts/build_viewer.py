@@ -321,7 +321,7 @@ def load_pose(model_path: Path, pose_arg: str | None, warnings: list[str]) -> di
         return None
     profile = json.loads(path.read_text(encoding="utf-8"))
     named = {k.split(".")[0] for a in profile.get("animations", {}).values() for k in a.get("tracks", {})} | set(profile.get("carry", {}))
-    unknown = sorted(named - POSE_PARTS - {"item", "mode"})
+    unknown = sorted(named - POSE_PARTS - {"item", "mode", "itemMatrix"})
     if unknown:
         warnings.append(f"Pose profile {path.name} names unknown parts: {', '.join(unknown)} (known: {', '.join(sorted(POSE_PARTS))}, item).")
     print(f"Using pose profile {path}")
