@@ -314,11 +314,20 @@ def load_pose(model_path: Path, pose_arg: str | None, warnings: list[str]) -> di
     candidates = [Path(pose_arg)] if pose_arg else [model_path.with_suffix(".pose.json"),
                                                     REPO / ".model-viewer" / "poses" / f"{model_path.stem}.pose.json",
                                                     REPO / "run" / "model-viewer" / "poses" / f"{model_path.stem}.pose.json"]   # the last: recorded in game
-    path = next((c for c in candidates if c.is_file()), None)
+    found = [c for c in candidates if c.is_file()]
+    path = max(found, key=lambda c: c.stat().st_mtime) if found and not pose_arg else (found[0] if found else None)   # newest wins
     if path is None:
         if pose_arg:
             sys.exit(f"Pose profile not found: {pose_arg}")
         return None
+    shared = REPO / ".model-viewer" / "poses" / f"{model_path.stem}.pose.json"
+    if not pose_arg and path != shared and REPO in path.parents and (REPO / "run") in path.parents:
+        # A recording lives in the game's run folder, which git ignores: copy it where it can be committed and shared.
+        shared.parent.mkdir(parents=True, exist_ok=True)
+        if not shared.is_file() or shared.read_bytes() != path.read_bytes():
+            shared.write_bytes(path.read_bytes())
+            print(f"Copied the recorded pose to {shared.relative_to(REPO)}: commit it so everyone gets the accurate animations.")
+        path = shared
     profile = json.loads(path.read_text(encoding="utf-8"))
     named = {k.split(".")[0] for a in profile.get("animations", {}).values() for k in a.get("tracks", {})} | set(profile.get("carry", {}))
     unknown = sorted(named - POSE_PARTS - {"item", "mode", "itemMatrix"})

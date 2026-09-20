@@ -30,7 +30,9 @@ pose and swing the game itself uses, from a pose profile (see `POSES.md`). If th
 3. Load a world, get the item (`/give @s namespace:item`) and hold it.
 4. Press **F5** (third person). Stand still for two seconds, then swing or use the item three or four times.
 5. Close the game. The pose is saved to `run/model-viewer/poses/<item>.pose.json`.
-6. Build the viewer again (`build_viewer.py <item>`); it picks the file up, and the button now loads it.
+6. Build the viewer again (`build_viewer.py <item>`); it picks the file up, and the button now loads it. The build also copies the
+   recording to `.model-viewer/poses/<item>.pose.json` in your project, because `run/` is normally git-ignored. **Commit that file**:
+   it is what gives everyone else the accurate animations. Without it they only see vanilla poses.
 
 In Claude Code, just ask: *"record the in-game animations for the scythe"*. Claude explains what it will add, asks before it launches
 the game, and runs steps 1 and 2 for you. The recorder only records in a development game (or with `-Dmodelviewer.record=true`) and

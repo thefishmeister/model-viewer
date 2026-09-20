@@ -39,8 +39,9 @@ presses that button or asks for it, use AskUserQuestion to say plainly what will
 On yes: run `python "${CLAUDE_PLUGIN_ROOT}/scripts/install_recorder.py"` from the project root, then launch the development client
 (`./gradlew runClient`, in the background). Tell them to hold the item, switch to third person (F5), stand still for a moment, and
 swing it a few times, then close the game or say when done. The pose is written to `<run folder>/model-viewer/poses/<item>.pose.json`
-(usually `run/`). Then rebuild the page (step 1 finds it), republish, and tell them the button now offers the recorded animations.
-Offer `install_recorder.py --remove` afterwards. Do not commit anything.
+(usually `run/`). Then rebuild the page (step 1 finds it, and copies it to `.model-viewer/poses/` in the project because `run/` is git-ignored), republish, and tell them the button now offers the recorded animations.
+Tell them to commit `.model-viewer/poses/<item>.pose.json` so teammates get the accurate animations (do not commit it for them), and offer
+`install_recorder.py --remove` afterwards.
 
 ## 1. Build the page
 
