@@ -305,6 +305,28 @@ def load_wings(name: str) -> dict:
                      "restSweep": 0.5, "flightSweep": 0.3, "restSpread": 0.4, "flightSpread": 0.05, "fold": 0.3, "blend": 0.12}}
 
 
+POSE_PARTS = {"head", "body", "rightArm", "leftArm", "rightLeg", "leftLeg"}
+
+
+def load_pose(model_path: Path, pose_arg: str | None, warnings: list[str]) -> dict | None:
+    """The item's in-game pose profile (see POSES.md): --pose FILE, else <model>.pose.json beside the model, else
+    .model-viewer/poses/<model>.pose.json in the project."""
+    candidates = [Path(pose_arg)] if pose_arg else [model_path.with_suffix(".pose.json"),
+                                                    REPO / ".model-viewer" / "poses" / f"{model_path.stem}.pose.json"]
+    path = next((c for c in candidates if c.is_file()), None)
+    if path is None:
+        if pose_arg:
+            sys.exit(f"Pose profile not found: {pose_arg}")
+        return None
+    profile = json.loads(path.read_text(encoding="utf-8"))
+    named = {k.split(".")[0] for a in profile.get("animations", {}).values() for k in a.get("tracks", {})} | set(profile.get("carry", {}))
+    unknown = sorted(named - POSE_PARTS - {"item", "mode"})
+    if unknown:
+        warnings.append(f"Pose profile {path.name} names unknown parts: {', '.join(unknown)} (known: {', '.join(sorted(POSE_PARTS))}, item).")
+    print(f"Using pose profile {path}")
+    return profile
+
+
 def as_artifact(html: str, title: str) -> str:
     """The Artifact tool wraps a page in its own <html>, <head> and <body>, so hand it only the title, style and body."""
     head_title = f"<title>{title} Viewer</title>"
@@ -314,7 +336,7 @@ def as_artifact(html: str, title: str) -> str:
 
 
 def build(model_arg: str, out: Path | None, extra_roots: list[str], skin: str | None = None,
-          skin_name: str | None = None, artifact: bool = False, wings: str | None = None) -> Path:
+          skin_name: str | None = None, artifact: bool = False, wings: str | None = None, pose: str | None = None) -> Path:
     roots = [Path(r) for r in extra_roots] + DEFAULT_ROOTS
     warnings: list[str] = []
     bb = None
@@ -337,7 +359,8 @@ def build(model_arg: str, out: Path | None, extra_roots: list[str], skin: str | 
         images = embed_textures(merged["textures"], roots, ns, warnings)
     title = model_path.stem.replace("_", " ").title()
     data = {"title": title, "elements": merged["elements"], "textures": merged["textures"], "images": images,
-            "display": merged["display"], "warnings": warnings, "skin": load_skin(skin, skin_name), "bb": bb, "wings": wing_data}
+            "display": merged["display"], "warnings": warnings, "skin": load_skin(skin, skin_name), "bb": bb, "wings": wing_data,
+            "pose": None if wings else load_pose(model_path, pose, warnings)}
     template = TEMPLATE.read_text(encoding="utf-8")
     payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
     html = template.replace("/*__DATA__*/null", payload, 1)
@@ -364,9 +387,10 @@ def main() -> None:
     parser.add_argument("--artifact", action="store_true",
                         help="write a fragment (title, style, body) for the Artifact tool, which supplies the page around it")
     parser.add_argument("--wings", metavar="SET", help="show a worn wing set on the character instead of an item model (vampire); the model argument is ignored")
+    parser.add_argument("--pose", metavar="FILE", help="the item's in-game pose profile (default: <model>.pose.json beside the model, or .model-viewer/poses/)")
     parser.add_argument("--open", action="store_true", help="open the result in the default browser")
     args = parser.parse_args()
-    out = build(args.model, args.out, args.resources, args.skin, args.skin_name, args.artifact, args.wings)
+    out = build(args.model, args.out, args.resources, args.skin, args.skin_name, args.artifact, args.wings, args.pose)
     if args.open:
         webbrowser.open(out.resolve().as_uri())
 

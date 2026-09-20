@@ -874,6 +874,62 @@ function hammerGrip(mainArm, offArm, right, pose, walkSway) {
   offArm.rotation.y = mix(both, offY, offArm.rotation.y);
   offArm.rotation.z = mix(both, offZ, offArm.rotation.z);
 }
+// A pose profile (POSES.md): how the mod's own code holds and swings this item, written down from its source. It layers on
+// top of the vanilla pose like a mixin at the tail of HumanoidModel.setupAnim: `carry` always applies while the item is held,
+// and each entry of `animations` is a timeline of keyframes over one swing.
+const PROFILE = DATA.pose || null;
+const PARTS = { head, body, rightArm, leftArm, rightLeg, leftLeg };
+if (PROFILE) {
+  const sel = $("anim");
+  for (const name of Object.keys(PROFILE.animations || {})) {
+    const o = document.createElement("option"); o.value = "prof:" + name; o.textContent = "Item: " + name; sel.appendChild(o);
+  }
+  sel.value = "idle";
+}
+function trackAt(keys, p, ease) {       // keys: [[progress 0..1, value], ...] in order
+  if (p <= keys[0][0]) return keys[0][1];
+  for (let i = 1; i < keys.length; i++) {
+    if (p <= keys[i][0]) {
+      let u = (p - keys[i - 1][0]) / Math.max(1e-6, keys[i][0] - keys[i - 1][0]);
+      if (ease === "smooth") u = u * u * (3 - 2 * u); else if (ease === "in") u = u * u;
+      return keys[i - 1][1] + u * (keys[i][1] - keys[i - 1][1]);
+    }
+  }
+  return keys[keys.length - 1][1];
+}
+function applyProfile(anim, tick, mirror, mainHand) {
+  const P = PROFILE, swap = { rightArm: "leftArm", leftArm: "rightArm", rightLeg: "leftLeg", leftLeg: "rightLeg" };
+  const item = { rx: 0, ry: 0, rz: 0, tx: 0, ty: 0, tz: 0 };
+  const put = (name, axis, v, add) => {
+    if (name === "item") { item[axis === "x" || axis === "y" || axis === "z" ? "r" + axis : axis] = v; return; }
+    const part = PARTS[mirror ? (swap[name] || name) : name];
+    if (!part || !"xyz".includes(axis)) return;
+    const val = mirror && axis !== "x" ? -v : v;              // a left-handed carry is the right-handed one mirrored
+    part.rotation[axis] = add ? part.rotation[axis] + val : val;
+  };
+  const carry = P.carry || {};
+  for (const [name, r] of Object.entries(carry)) {
+    if (name === "mode" || typeof r !== "object") continue;
+    for (const [axis, v] of Object.entries(r)) if (typeof v === "number") put(name, axis, v, carry.mode === "add");
+  }
+  const A = anim.startsWith("prof:") ? (P.animations || {})[anim.slice(5)] : null;
+  if (A) {
+    const ticks = A.ticks || 20, phase = A.loop ? tick % ticks : tick % (ticks + (A.gap || 0));
+    if (phase < ticks) {
+      const p = phase / ticks;
+      for (const [track, keys] of Object.entries(A.tracks || {})) {
+        const [name, axis] = track.split(".");
+        if (keys.length) put(name, axis, trackAt(keys, p, A.ease), A.mode === "add");
+      }
+    }
+  }
+  // The item turns about a pivot in the hand's frame (pixels: [y, z]), by rotations in degrees.
+  const piv = (carry.item && carry.item.pivot) || [0, 0], py = piv[0] / 16, pz = piv[1] / 16;
+  const e = new THREE.Euler(rad(item.rx), rad(item.ry), rad(item.rz), "XYZ");
+  const at = new THREE.Vector3(0, py, pz).applyEuler(e);
+  mainHand.rotation.copy(e);
+  mainHand.position.set(item.tx / 16, py - at.y + item.ty / 16, pz - at.z + item.tz / 16);
+}
 function pose(anim, t) {   // t in seconds; angles in radians, entity space (negative x swings a limb forward)
   const tick = t * 20;
   const hammer = anim.startsWith("hammer-");
@@ -912,6 +968,7 @@ function pose(anim, t) {   // t in seconds; angles in radians, entity space (neg
   // Idle arm bob (AnimationUtils.bobArms).
   rightArm.rotation.z += Math.cos(tick * 0.09) * 0.05 + 0.05;   leftArm.rotation.z -= Math.cos(tick * 0.09) * 0.05 + 0.05;
   rightArm.rotation.x += Math.sin(tick * 0.067) * 0.05;         leftArm.rotation.x -= Math.sin(tick * 0.067) * 0.05;
+  if (PROFILE && holding && !hammer) applyProfile(anim, tick, left, mainHand);
   if (hammer) {
     const p = hammerPose(attack);
     hammerGrip(mainArm, offArm, !left, p, walkSway);

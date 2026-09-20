@@ -9,6 +9,28 @@ Build a self-contained 3D viewer for the model, then publish it as an Artifact s
 and shared with the team. The scripts live in `${CLAUDE_PLUGIN_ROOT}/scripts`. Run them from the **project root**: models
 and textures are found under `src/main/resources/assets` and `src/client/resources/assets` of the current directory.
 
+## 0. Find how it is held in game
+
+The viewer only knows vanilla poses, and mods change them in code, so **before building, scan the project** for how this item is held
+and animated, and do not guess:
+
+```bash
+python "${CLAUDE_PLUGIN_ROOT}/scripts/scan_poses.py" <model> --json
+```
+
+It reports the model's `display` transforms, the item definition, and the Java files that mention the item next to arm-pose code
+(and any mixin into `HumanoidModel` / `ItemInHandLayer`, which pose every held item). Then:
+
+* If a `profile` already exists, use it (step 1 loads it) and skip ahead.
+* If pose code is reported, **read those files** and write a pose profile from them, following `${CLAUDE_PLUGIN_ROOT}/POSES.md`,
+  saved as `.model-viewer/poses/<model>.pose.json` in the project. Copy constants and timings from the code; do not tune by eye.
+  Put the file and line you took each value from in the profile's `source`.
+* If nothing is found, say so and **ask the user** where the pose is defined (unpushed, another repo or branch, a resource pack),
+  or whether the model's `display` transform is all there is. Build with only the display transform until they answer, and say the
+  animation is not the in-game one. Never invent a pose.
+* Show the user what you wrote, and ask (AskUserQuestion) about anything you inferred rather than read, such as a value computed at
+  runtime or an animation you could not port. Say plainly what the viewer cannot express (see POSES.md).
+
 ## 1. Build the page
 
 Work out which model. It may be a name (`giant_hammer`), an id (`orvcraft:item/void_bow`), a path to a `.json` file or to
@@ -26,7 +48,8 @@ Put the output in the session scratchpad, not the repository. Read the printed w
 models that are not bundled) and tell the user about any.
 
 Options: `--skin FILE` or `--skin-name PLAYER` (the character's skin; default is the bundled one),
-`--resources DIR` (extra assets folder for models kept outside the project), `--wings vampire` (ORVCraft only).
+`--resources DIR` (extra assets folder for models kept outside the project), `--pose FILE` (a pose profile; by default
+`<model>.pose.json` beside the model or `.model-viewer/poses/<model>.pose.json` is picked up), `--wings vampire` (ORVCraft only).
 
 ## 2. Check for problems, and ask
 
