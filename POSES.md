@@ -43,4 +43,12 @@ Write the profile for a **right-handed** main arm: a left-handed view mirrors it
   repeats (or `"loop": true`), `tracks` maps `part.axis` (or `item.x`, `item.tx`, ...) to `[progress 0..1, value]` keyframes.
   `ease` is `linear` (default), `smooth` or `in`.
 
+**Recorded profiles.** `scripts/install_recorder.py` adds a recorder to a Fabric mod's client code (`recorder/`). In a development game
+it writes the profile itself while the item is held and swung in third person: every part's rotation and position from the finished
+pose, with axes `x y z` (radians) and `px py pz` (pixels), plus `itemMatrix`, the item's exact transform in the character's model
+space (16 numbers, column-major; keyframed as `[progress, [16 numbers]]` inside an animation). It lands in
+`<run folder>/model-viewer/poses/<item>.pose.json`. A left-handed wielder is recorded mirrored, as a right-handed one.
+
+The viewer never applies a profile until the user presses **Load accurate in-game animations**.
+
 Not expressible as data, so ported by hand: solved poses such as the Giant Hammer's second hand finding the haft. That one is built in.

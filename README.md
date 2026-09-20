@@ -82,6 +82,7 @@ Run it before pushing a model. It leaves the file's formatting alone.
 
 * `build_viewer.py` builds the page. `viewer_template.html` is the page (three.js, the character, the controls).
 * `fix_zfighting.py` finds and fixes overlapping coplanar faces.
+* `install_recorder.py` adds an in-game pose recorder to a Fabric mod (`recorder/`); it records how the game holds and swings an item.
 * `scan_poses.py` scans a project's code for how an item is held and swung; `POSES.md` is the pose-profile format the viewer loads.
 * `check_model.py` lists likely mistakes as "is this intended?" questions (the skill asks them for you); it changes nothing.
 * `skins/` holds the character's skin(s); `skins/DEFAULT` names the one used.

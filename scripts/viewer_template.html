@@ -83,6 +83,11 @@
       <label class="slider" style="margin-top:6px">Speed <input id="speed" type="range" min="0.2" max="2.5" step="0.05" value="1"></label>
       <div class="row" style="margin-top:6px"><button id="t-pause">Pause</button></div>
     </div>
+    <div id="acc"><h2>Accurate animations</h2>
+      <div class="note" id="acc-note"></div>
+      <div class="row" style="margin-top:6px"><button id="acc-btn"></button></div>
+      <div class="note" id="acc-ask" hidden></div>
+    </div>
     <div><h2>View</h2>
       <div class="row">
         <button data-view="north">North</button><button data-view="south">South</button>
@@ -757,7 +762,7 @@ let paused = false, clock = 0, last = performance.now();
 $("t-pause").addEventListener("click", () => { paused = !paused; $("t-pause").classList.toggle("on", paused); $("t-pause").textContent = paused ? "Play" : "Pause"; });
 function resetPose() {
   for (const p of [head, body, rightArm, leftArm, rightLeg, leftLeg]) { p.rotation.set(0, 0, 0); p.position.copy(p.userData.rest); }
-  for (const h of [rightHand, leftHand]) { h.rotation.set(0, 0, 0); h.position.set(0, 0, 0); }
+  for (const h of [rightHand, leftHand]) { h.matrixAutoUpdate = true; h.rotation.set(0, 0, 0); h.position.set(0, 0, 0); }
   charBody.rotation.set(0, 0, 0);
   for (const list of Object.values(bbNodes)) for (const o of list) { o.position.copy(o.userData.base.p); o.rotation.copy(o.userData.base.r); o.scale.copy(o.userData.base.s); }
 }
@@ -813,12 +818,6 @@ if (BB && BB.animations.length) {
 // The game's own numbers, ported: HumanoidModel.setupAnim (walk, held-item arm pose, attack, arm bob) and, for the
 // Giant Hammer, its HammerHold pose with the two-hand reach solve from HumanoidModelTwoHandMixin.
 const IS_HAMMER = /^giant hammer$/i.test(DATA.title || "");
-if (IS_HAMMER) {
-  const sel = $("anim");
-  for (const [v, label] of [["hammer-carry", "Giant Hammer: carried"], ["hammer-walk", "Giant Hammer: carried, walking"], ["hammer-swing", "Giant Hammer: swing"]]) {
-    const o = document.createElement("option"); o.value = v; o.textContent = label; sel.appendChild(o);
-  }
-}
 const HH = { REST_PITCH: 130, IMPACT: 0.5, REST_ARM_X: 0.3, OVERHEAD_ARM_X: -2.7, STRIKE_ARM_X: -0.9, GUARD_PITCH: -10, STRIKE_PITCH: -111,
              WINDUP_END: 0.32, HOLD_END: 0.72, SWING_TICKS: 14, REST_OUT: 0.4, MAIN_IN: 0.65, GRIP_Y: 7.6, GRIP_Z: 0.43,
              POMMEL_MIN: 4, POMMEL_MAX: 7, HEAD_MIN: -12, HEAD_MAX: -4, ITEM_GRIP_Y: -1.67, ITEM_GRIP_Z: 2.26 };
@@ -879,13 +878,6 @@ function hammerGrip(mainArm, offArm, right, pose, walkSway) {
 // and each entry of `animations` is a timeline of keyframes over one swing.
 const PROFILE = DATA.pose || null;
 const PARTS = { head, body, rightArm, leftArm, rightLeg, leftLeg };
-if (PROFILE) {
-  const sel = $("anim");
-  for (const name of Object.keys(PROFILE.animations || {})) {
-    const o = document.createElement("option"); o.value = "prof:" + name; o.textContent = "Item: " + name; sel.appendChild(o);
-  }
-  sel.value = "idle";
-}
 function trackAt(keys, p, ease) {       // keys: [[progress 0..1, value], ...] in order
   if (p <= keys[0][0]) return keys[0][1];
   for (let i = 1; i < keys.length; i++) {
@@ -897,19 +889,38 @@ function trackAt(keys, p, ease) {       // keys: [[progress 0..1, value], ...] i
   }
   return keys[keys.length - 1][1];
 }
+const MIRROR_X = new THREE.Matrix4().makeScale(-1, 1, 1);
+function matrixAt(keys, p) {            // keys: [[progress, [16 numbers]], ...]: blend the two neighbours by position, rotation and scale
+  let i = 0;
+  while (i < keys.length - 1 && keys[i + 1][0] < p) i++;
+  const a = keys[i], b = keys[Math.min(i + 1, keys.length - 1)];
+  const u = a === b ? 0 : clamp01((p - a[0]) / Math.max(1e-6, b[0] - a[0]));
+  const pa = new THREE.Vector3(), qa = new THREE.Quaternion(), sa = new THREE.Vector3();
+  const pb = new THREE.Vector3(), qb = new THREE.Quaternion(), sb = new THREE.Vector3();
+  new THREE.Matrix4().fromArray(a[1]).decompose(pa, qa, sa);
+  new THREE.Matrix4().fromArray(b[1]).decompose(pb, qb, sb);
+  return new THREE.Matrix4().compose(pa.lerp(pb, u), qa.slerp(qb, u), sa.lerp(sb, u)).toArray();
+}
 function applyProfile(anim, tick, mirror, mainHand) {
   const P = PROFILE, swap = { rightArm: "leftArm", leftArm: "rightArm", rightLeg: "leftLeg", leftLeg: "rightLeg" };
   const item = { rx: 0, ry: 0, rz: 0, tx: 0, ty: 0, tz: 0 };
   const put = (name, axis, v, add) => {
     if (name === "item") { item[axis === "x" || axis === "y" || axis === "z" ? "r" + axis : axis] = v; return; }
     const part = PARTS[mirror ? (swap[name] || name) : name];
-    if (!part || !"xyz".includes(axis)) return;
+    if (!part) return;
+    if (axis.length === 2 && axis[0] === "p" && "xyz".includes(axis[1])) {   // a position, in pixels (a recorded arm pivot)
+      const val = (mirror && axis === "px" ? -v : v) / 16;
+      part.position[axis[1]] = add ? part.position[axis[1]] + val : val;
+      return;
+    }
+    if (!"xyz".includes(axis)) return;
     const val = mirror && axis !== "x" ? -v : v;              // a left-handed carry is the right-handed one mirrored
     part.rotation[axis] = add ? part.rotation[axis] + val : val;
   };
   const carry = P.carry || {};
+  let matrix = carry.itemMatrix || null;               // a recorded item transform, in the character's model space
   for (const [name, r] of Object.entries(carry)) {
-    if (name === "mode" || typeof r !== "object") continue;
+    if (name === "mode" || name === "itemMatrix" || typeof r !== "object" || Array.isArray(r)) continue;
     for (const [axis, v] of Object.entries(r)) if (typeof v === "number") put(name, axis, v, carry.mode === "add");
   }
   const A = anim.startsWith("prof:") ? (P.animations || {})[anim.slice(5)] : null;
@@ -921,7 +932,17 @@ function applyProfile(anim, tick, mirror, mainHand) {
         const [name, axis] = track.split(".");
         if (keys.length) put(name, axis, trackAt(keys, p, A.ease), A.mode === "add");
       }
+      if (A.itemMatrix && A.itemMatrix.length) matrix = matrixAt(A.itemMatrix, p);
     }
+  }
+  if (matrix) {                                          // place the item exactly where the game did
+    const parent = mainHand.parent;
+    charBody.updateWorldMatrix(true, true); parent.updateWorldMatrix(true, false);
+    const m = new THREE.Matrix4().fromArray(matrix);
+    if (mirror) m.premultiply(MIRROR_X).multiply(MIRROR_X);
+    mainHand.matrixAutoUpdate = false;
+    mainHand.matrix.copy(parent.matrixWorld).invert().multiply(charBody.matrixWorld).multiply(m);
+    return;
   }
   // The item turns about a pivot in the hand's frame (pixels: [y, z]), by rotations in degrees.
   const piv = (carry.item && carry.item.pivot) || [0, 0], py = piv[0] / 16, pz = piv[1] / 16;
@@ -930,6 +951,47 @@ function applyProfile(anim, tick, mirror, mainHand) {
   mainHand.rotation.copy(e);
   mainHand.position.set(item.tx / 16, py - at.y + item.ty / 16, pz - at.z + item.tz / 16);
 }
+// ---- accurate in-game animations: opt-in ------------------------------------------------------------------------
+// Vanilla poses are shown until the user asks for the game's own. They come from a pose profile recorded in game, or (for the
+// Giant Hammer) a port of its code. With neither, the button explains that recording means being taken into the game.
+let ACCURATE = false;
+const ACC_AVAILABLE = !!PROFILE || IS_HAMMER;
+const ACC_OPTIONS = () => [
+  ...Object.keys((PROFILE && PROFILE.animations) || {}).map((n) => ["prof:" + n, "Item: " + n]),
+  ...(IS_HAMMER ? [["hammer-carry", "Giant Hammer: carried"], ["hammer-walk", "Giant Hammer: carried, walking"], ["hammer-swing", "Giant Hammer: swing"]] : []),
+];
+function setAccurate(on) {
+  ACCURATE = on;
+  const sel = $("anim");
+  for (const o of [...sel.options]) if (o.value.startsWith("prof:") || o.value.startsWith("hammer-")) o.remove();
+  if (on) for (const [v, label] of ACC_OPTIONS()) { const o = document.createElement("option"); o.value = v; o.textContent = label; sel.appendChild(o); }
+  sel.value = "idle";                       // the menu just changed under the current choice: start from the idle pose
+  resetPose(); if (!paused) clock = 0;
+  $("acc-btn").classList.toggle("on", on);
+  $("acc-btn").textContent = on ? "Back to vanilla poses" : "Load accurate in-game animations";
+}
+(function initAccurate() {
+  const box = $("acc");
+  if (WINGS || entityOnly) { box.hidden = true; return; }
+  const btn = $("acc-btn"), note = $("acc-note"), ask = $("acc-ask");
+  if (ACC_AVAILABLE) {
+    const recorded = PROFILE && PROFILE.recorded;
+    note.textContent = "Vanilla poses are shown. " + (recorded ? "This item's pose and swing were recorded from Minecraft itself. " : PROFILE ? "This item has a pose profile written from the mod's code. " : "The Giant Hammer's pose is ported from the mod's code. ") +
+      "Loading them holds the item as it is held in game and adds its swing to the Animation menu.";
+    btn.textContent = "Load accurate in-game animations";
+    btn.addEventListener("click", () => setAccurate(!ACCURATE));
+    return;
+  }
+  note.textContent = "Vanilla poses are shown, and the game may hold or swing this item differently. No in-game pose has been recorded for it yet.";
+  btn.textContent = "Record accurate animations in game...";
+  const request = "Record the in-game animations for " + (DATA.title || "this item") + " (launch the game).";
+  ask.innerHTML = "<b>This will bring you into the game.</b> Minecraft launches in a development window. You hold this item, switch to third person (F5) and swing it, and the pose is recorded automatically. It appears here the next time the viewer is built.<br><br>Ask Claude: <i></i> Claude will check with you before it launches the game.";
+  ask.querySelector("i").textContent = "“" + request + "”";
+  const copy = document.createElement("button"); copy.textContent = "Copy request"; copy.style.marginTop = "8px";
+  copy.addEventListener("click", () => { try { navigator.clipboard.writeText(request); copy.textContent = "Copied"; } catch (e) { copy.textContent = "Copy failed"; } });
+  ask.appendChild(document.createElement("br")); ask.appendChild(copy);
+  btn.addEventListener("click", () => { ask.hidden = !ask.hidden; btn.classList.toggle("on", !ask.hidden); });
+})();
 function pose(anim, t) {   // t in seconds; angles in radians, entity space (negative x swings a limb forward)
   const tick = t * 20;
   const hammer = anim.startsWith("hammer-");
@@ -968,7 +1030,7 @@ function pose(anim, t) {   // t in seconds; angles in radians, entity space (neg
   // Idle arm bob (AnimationUtils.bobArms).
   rightArm.rotation.z += Math.cos(tick * 0.09) * 0.05 + 0.05;   leftArm.rotation.z -= Math.cos(tick * 0.09) * 0.05 + 0.05;
   rightArm.rotation.x += Math.sin(tick * 0.067) * 0.05;         leftArm.rotation.x -= Math.sin(tick * 0.067) * 0.05;
-  if (PROFILE && holding && !hammer) applyProfile(anim, tick, left, mainHand);
+  if (ACCURATE && PROFILE && holding && !hammer) applyProfile(anim, tick, left, mainHand);
   if (hammer) {
     const p = hammerPose(attack);
     hammerGrip(mainArm, offArm, !left, p, walkSway);

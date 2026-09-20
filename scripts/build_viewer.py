@@ -312,7 +312,8 @@ def load_pose(model_path: Path, pose_arg: str | None, warnings: list[str]) -> di
     """The item's in-game pose profile (see POSES.md): --pose FILE, else <model>.pose.json beside the model, else
     .model-viewer/poses/<model>.pose.json in the project."""
     candidates = [Path(pose_arg)] if pose_arg else [model_path.with_suffix(".pose.json"),
-                                                    REPO / ".model-viewer" / "poses" / f"{model_path.stem}.pose.json"]
+                                                    REPO / ".model-viewer" / "poses" / f"{model_path.stem}.pose.json",
+                                                    REPO / "run" / "model-viewer" / "poses" / f"{model_path.stem}.pose.json"]   # the last: recorded in game
     path = next((c for c in candidates if c.is_file()), None)
     if path is None:
         if pose_arg:

@@ -11,25 +11,36 @@ and textures are found under `src/main/resources/assets` and `src/client/resourc
 
 ## 0. Find how it is held in game
 
-The viewer only knows vanilla poses, and mods change them in code, so **before building, scan the project** for how this item is held
-and animated, and do not guess:
+The viewer draws vanilla poses, and mods change them in code. The page has an **Accurate animations** button that the user must
+press to switch to the game's own pose and swing; it is never on by default. Prepare what that button can load:
 
 ```bash
 python "${CLAUDE_PLUGIN_ROOT}/scripts/scan_poses.py" <model> --json
 ```
 
-It reports the model's `display` transforms, the item definition, and the Java files that mention the item next to arm-pose code
-(and any mixin into `HumanoidModel` / `ItemInHandLayer`, which pose every held item). Then:
+It reports an existing pose profile (`profile`), the model's `display` transforms, the item definition, and the Java files that
+mention the item next to arm-pose code. Then, in this order:
 
-* If a `profile` already exists, use it (step 1 loads it) and skip ahead.
-* If pose code is reported, **read those files** and write a pose profile from them, following `${CLAUDE_PLUGIN_ROOT}/POSES.md`,
-  saved as `.model-viewer/poses/<model>.pose.json` in the project. Copy constants and timings from the code; do not tune by eye.
-  Put the file and line you took each value from in the profile's `source`.
-* If nothing is found, say so and **ask the user** where the pose is defined (unpushed, another repo or branch, a resource pack),
-  or whether the model's `display` transform is all there is. Build with only the display transform until they answer, and say the
-  animation is not the in-game one. Never invent a pose.
-* Show the user what you wrote, and ask (AskUserQuestion) about anything you inferred rather than read, such as a value computed at
-  runtime or an animation you could not port. Say plainly what the viewer cannot express (see POSES.md).
+1. **A profile exists** (recorded in game, or written earlier): step 1 loads it and the button offers it. Nothing more to do.
+2. **Pose code is reported**: read those files and write a pose profile from them, following `${CLAUDE_PLUGIN_ROOT}/POSES.md`, saved
+   as `.model-viewer/poses/<model>.pose.json` in the project. Copy constants and timings from the code; do not tune by eye. Put the
+   file and line each value came from in the profile's `source`. Ask (AskUserQuestion) about anything inferred rather than read.
+3. **Nothing is found**: say so. Build with the display transform only; the button then reads "Record accurate animations in game...".
+
+### Recording it from the game
+
+The most accurate source is the game itself. **Recording brings the user into the game, so never start it unasked.** When the user
+presses that button or asks for it, use AskUserQuestion to say plainly what will happen, and only continue on a yes:
+
+* a small recorder (two mixins and a class, `${CLAUDE_PLUGIN_ROOT}/recorder`) is added to the project's client code, and to its
+  client mixin config, and can be removed again; it records in a development game only and changes nothing that is drawn;
+* Minecraft then launches in a development window and they are taken into it.
+
+On yes: run `python "${CLAUDE_PLUGIN_ROOT}/scripts/install_recorder.py"` from the project root, then launch the development client
+(`./gradlew runClient`, in the background). Tell them to hold the item, switch to third person (F5), stand still for a moment, and
+swing it a few times, then close the game or say when done. The pose is written to `<run folder>/model-viewer/poses/<item>.pose.json`
+(usually `run/`). Then rebuild the page (step 1 finds it), republish, and tell them the button now offers the recorded animations.
+Offer `install_recorder.py --remove` afterwards. Do not commit anything.
 
 ## 1. Build the page
 
@@ -49,7 +60,7 @@ models that are not bundled) and tell the user about any.
 
 Options: `--skin FILE` or `--skin-name PLAYER` (the character's skin; default is the bundled one),
 `--resources DIR` (extra assets folder for models kept outside the project), `--pose FILE` (a pose profile; by default
-`<model>.pose.json` beside the model or `.model-viewer/poses/<model>.pose.json` is picked up), `--wings vampire` (ORVCraft only).
+`<model>.pose.json` beside the model, `.model-viewer/poses/<model>.pose.json`, or one recorded in `run/model-viewer/poses/` is picked up), `--wings vampire` (ORVCraft only).
 
 ## 2. Check for problems, and ask
 
@@ -76,7 +87,7 @@ words), use a short generic icon such as `cube`, and describe it in one sentence
 loads three.js only from jsDelivr, which Artifacts allow. Give the user the link, and say what to try:
 
 * **In game** dropdown: held in either hand, worn, in an inventory slot, or floating above the head (item display, with a scale slider).
-* **Animation** dropdown: idle, walk, sprint, attack swing, overhead slam.
+* **Animation** dropdown: idle, walk, sprint, attack swing; press **Load accurate in-game animations** to hold and swing it as the game does.
 * Drag to orbit, scroll to zoom, right-drag to pan.
 
 If the model changes, rebuild and republish to the same Artifact URL.
