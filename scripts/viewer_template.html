@@ -985,7 +985,15 @@ function setAccurate(on) {
   note.textContent = "Vanilla poses are shown, and the game may hold or swing this item differently. No in-game pose has been recorded for it yet.";
   btn.textContent = "Record accurate animations in game...";
   const request = "Record the in-game animations for " + (DATA.title || "this item") + " (launch the game).";
-  ask.innerHTML = "<b>This will bring you into the game.</b> Minecraft launches in a development window. You hold this item, switch to third person (F5) and swing it, and the pose is recorded automatically. It appears here the next time the viewer is built.<br><br>Ask Claude: <i></i> Claude will check with you before it launches the game.";
+  ask.innerHTML = "<b>This will bring you into the game.</b> Minecraft launches in a development window, and you record the pose by holding and swinging the item yourself.<br><br>" +
+    "<b>The easy way:</b> ask Claude <i></i> Claude explains what it will add, asks before it launches the game, and does steps 1 and 2 for you.<br><br>" +
+    "<b>Steps</b><ol style='margin:4px 0 0;padding-left:18px'>" +
+    "<li>In your mod project, install the recorder: <code>python scripts/install_recorder.py</code> (from the plugin folder, run in the project root). It adds a small client-only recorder and can be removed again with <code>--remove</code>.</li>" +
+    "<li>Launch a development client, for example <code>gradlew runClient</code>.</li>" +
+    "<li>Load a world, get the item (<code>/give @s namespace:item</code>) and hold it.</li>" +
+    "<li>Press <b>F5</b> for third person. Stand still for two seconds, then swing or use it three or four times.</li>" +
+    "<li>Close the game. The pose is saved to <code>run/model-viewer/poses/&lt;item&gt;.pose.json</code>.</li>" +
+    "<li>Build this viewer again. The button here then reads “Load accurate in-game animations”.</li></ol>";
   ask.querySelector("i").textContent = "“" + request + "”";
   const copy = document.createElement("button"); copy.textContent = "Copy request"; copy.style.marginTop = "8px";
   copy.addEventListener("click", () => { try { navigator.clipboard.writeText(request); copy.textContent = "Copied"; } catch (e) { copy.textContent = "Copy failed"; } });

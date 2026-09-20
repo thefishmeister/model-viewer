@@ -18,6 +18,24 @@ Ask for it: *"show me the giant hammer in 3D"*, *"let me look at my new sword"*.
 (`skills/view-model`) builds the page with `--artifact` (a fragment: the Artifact tool supplies the page around it) and publishes it, so the model can be rotated right in the
 conversation, and the link can be shared with the team for review.
 
+## Accurate in-game animations
+
+The viewer shows vanilla poses until you press **Load accurate in-game animations**; it is never on by default. The button loads the
+pose and swing the game itself uses, from a pose profile (see `POSES.md`). If the item has none, the button instead reads
+**Record accurate animations in game...** and explains that this brings you into the game. To record one:
+
+1. In your mod project (Fabric), install the recorder from the project root: `python <plugin>/scripts/install_recorder.py`.
+   It adds two client mixins and a class (from `recorder/`) and registers them in your client mixin config. `--remove` undoes it.
+2. Launch a development client, e.g. `gradlew runClient`.
+3. Load a world, get the item (`/give @s namespace:item`) and hold it.
+4. Press **F5** (third person). Stand still for two seconds, then swing or use the item three or four times.
+5. Close the game. The pose is saved to `run/model-viewer/poses/<item>.pose.json`.
+6. Build the viewer again (`build_viewer.py <item>`); it picks the file up, and the button now loads it.
+
+In Claude Code, just ask: *"record the in-game animations for the scythe"*. Claude explains what it will add, asks before it launches
+the game, and runs steps 1 and 2 for you. The recorder only records in a development game (or with `-Dmodelviewer.record=true`) and
+never changes what is drawn. The model only renders in third person, so nothing is captured in first person.
+
 ## What the page can do
 
 | Control | What it does |
